@@ -754,7 +754,7 @@ function render_form()
 		elseif action == "save_restart" then
 			body = (http.formvalue("conf") or ""):gsub("\r\n?", "\n")
 			fs.writefile(CONF_PATH, body)
-			fs.chmod(CONF_PATH, 384)
+			fs.chmod(CONF_PATH, "0600")
 			invalidate_snapshot_cache()
 			if shell_ok(INIT_PATH .. " restart") then
 				local info = localized_message("form.configSavedRestarting", "Configuration saved. Service restarting (check status and logs below).")
