@@ -30,7 +30,7 @@ concurrency:
 
 env:
   PACKAGE_NAME: drcom_openwrt
-  OPENWRT_RELEASE: 24.10.5
+  OPENWRT_RELEASE: 24.10.7
 
 jobs:
   verify:
@@ -46,7 +46,17 @@ jobs:
         run: |
           python3 -m py_compile scripts/build-legacy-ipk.py
           python3 -m py_compile scripts/generate-openwrt-sdk-matrix.py
+          python3 -m py_compile scripts/patch-package-layout.py
+          python3 -m py_compile scripts/tests/auth_static_smoke.py
+          python3 -m py_compile scripts/tests/ipk_archive_smoke.py
+          python3 -m py_compile scripts/tests/luci_static_smoke.py
+          python3 -m py_compile scripts/tests/sdk_script_smoke.py
           bash -n scripts/build-openwrt-sdk-ipk.sh
+          python3 scripts/tests/auth_static_smoke.py
+          python3 scripts/tests/ipk_archive_smoke.py
+          python3 scripts/tests/package_layout_smoke.py
+          python3 scripts/tests/sdk_script_smoke.py
+          python3 scripts/tests/luci_static_smoke.py
 
       - name: Validate LuCI controller syntax
         run: npx --yes luaparse drcom/files/usr/lib/lua/luci/controller/drcom.lua > /dev/null
@@ -59,12 +69,20 @@ jobs:
           marker = '<script type="text/javascript">'
           start = html.index(marker) + len(marker)
           end = html.index('</script>', start)
-          Path('.tmp-luci-form.js').write_text(html[start:end], encoding='utf-8', newline='\n')
+          with Path('.tmp-luci-form.js').open('w', encoding='utf-8', newline='\n') as handle:
+              handle.write(html[start:end])
           PY
           node --check .tmp-luci-form.js
 
-      - name: Run parser smoke test
-        run: make -C drcom/src test-parser
+      - name: Run source smoke tests
+        run: |
+          make -C drcom/src test-parser
+          make -C drcom/src test-retry-policy
+          make -C drcom/src test-protocol-packet
+          make -C drcom/src test-keepalive-packet
+
+      - name: Build bundled source
+        run: make -C drcom/src
 
   plan:
     name: plan-matrix

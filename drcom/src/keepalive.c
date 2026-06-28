@@ -17,40 +17,239 @@ typedef int socklen_t;
 #include "libs/md4.h"
 #include "libs/md5.h"
 #include "libs/sha1.h"
+#include "retry_policy.h"
+
+static const unsigned char DRCOM_KEEPALIVE_FIRST_VERSION[2] = {0x0f, 0x27};
+
+static int drcom_expected_byte_matches(unsigned char value, int expected_byte, int alternate_byte) {
+    if (expected_byte == DRCOM_UDP_EXPECT_ANY) {
+        return 1;
+    }
+
+    return value == (unsigned char)expected_byte ||
+           (alternate_byte != DRCOM_UDP_EXPECT_ANY && value == (unsigned char)alternate_byte);
+}
+
+static int drcom_packet_matches_expected(const unsigned char *packet,
+                                         int packet_length,
+                                         int expected_first_byte,
+                                         int alternate_first_byte,
+                                         int expected_second_byte,
+                                         int expected_third_byte,
+                                         int expected_fourth_byte,
+                                         int expected_sixth_byte,
+                                         int minimum_length) {
+    if (minimum_length > 0 && packet_length < minimum_length) {
+        return 0;
+    }
+
+    if (expected_first_byte != DRCOM_UDP_EXPECT_ANY) {
+        if (packet_length <= 0 || !drcom_expected_byte_matches(packet[0], expected_first_byte, alternate_first_byte)) {
+            return 0;
+        }
+    }
+
+    if (expected_second_byte != DRCOM_UDP_EXPECT_ANY) {
+        if (packet_length <= 1 || packet[1] != (unsigned char)expected_second_byte) {
+            return 0;
+        }
+    }
+
+    if (expected_third_byte != DRCOM_UDP_EXPECT_ANY) {
+        if (packet_length <= 2 || packet[2] != (unsigned char)expected_third_byte) {
+            return 0;
+        }
+    }
+
+    if (expected_fourth_byte != DRCOM_UDP_EXPECT_ANY) {
+        if (packet_length <= 3 || packet[3] != (unsigned char)expected_fourth_byte) {
+            return 0;
+        }
+    }
+
+    if (expected_sixth_byte != DRCOM_UDP_EXPECT_ANY) {
+        if (packet_length <= 5 || packet[5] != (unsigned char)expected_sixth_byte) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int drcom_packet_source_matches(struct sockaddr_in expected_addr, struct sockaddr_in from_addr) {
+    return expected_addr.sin_addr.s_addr == from_addr.sin_addr.s_addr &&
+           expected_addr.sin_port == from_addr.sin_port;
+}
+
+int drcom_udp_send_recv_with_retries(int sockfd,
+                                     struct sockaddr_in addr,
+                                     const unsigned char *send_packet,
+                                     int send_length,
+                                     unsigned char *recv_packet,
+                                     int recv_length,
+                                     char send_msg[10],
+                                     char recv_msg[10]) {
+    return drcom_udp_send_recv_expected_with_retries(sockfd,
+                                                     addr,
+                                                     send_packet,
+                                                     send_length,
+                                                     recv_packet,
+                                                     recv_length,
+                                                     send_msg,
+                                                     recv_msg,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     0);
+}
+
+int drcom_udp_recv_expected_packet(int sockfd,
+                                   struct sockaddr_in addr,
+                                   unsigned char *recv_packet,
+                                   int recv_length,
+                                   char recv_msg[10],
+                                   int expected_first_byte,
+                                   int alternate_first_byte,
+                                   int expected_second_byte,
+                                   int expected_third_byte,
+                                   int expected_fourth_byte,
+                                   int expected_sixth_byte,
+                                   int minimum_length) {
+    int recv_result = -1;
+
+    while (1) {
+        struct sockaddr_in from_addr;
+        socklen_t from_len = sizeof(from_addr);
+
+        memset(&from_addr, 0, sizeof(from_addr));
+        recv_result = recvfrom(sockfd, recv_packet, recv_length, 0, (struct sockaddr *)&from_addr, &from_len);
+        if (recv_result < 0) {
+            return -1;
+        }
+
+        if (verbose_flag) {
+            print_packet(recv_msg, recv_packet, recv_result);
+        }
+        if (logging_flag) {
+            logging(recv_msg, recv_packet, recv_result);
+        }
+
+        if (drcom_packet_source_matches(addr, from_addr) &&
+            drcom_packet_matches_expected(recv_packet,
+                                          recv_result,
+                                          expected_first_byte,
+                                          alternate_first_byte,
+                                          expected_second_byte,
+                                          expected_third_byte,
+                                          expected_fourth_byte,
+                                          expected_sixth_byte,
+                                          minimum_length)) {
+            return recv_result;
+        }
+
+        printf("[Tips] Ignoring unexpected UDP response while waiting for current packet.\n");
+        if (logging_flag) {
+            logging("[Tips] Ignoring unexpected UDP response while waiting for current packet.", NULL, 0);
+        }
+    }
+
+    return -1;
+}
+
+int drcom_udp_send_recv_expected_with_retries(int sockfd,
+                                              struct sockaddr_in addr,
+                                              const unsigned char *send_packet,
+                                              int send_length,
+                                              unsigned char *recv_packet,
+                                              int recv_length,
+                                              char send_msg[10],
+                                              char recv_msg[10],
+                                              int expected_first_byte,
+                                              int expected_second_byte,
+                                              int expected_third_byte,
+                                              int expected_fourth_byte,
+                                              int expected_sixth_byte,
+                                              int minimum_length) {
+    int attempt;
+    int recv_result = -1;
+
+    for (attempt = 0; attempt <= DRCOM_UDP_PACKET_RETRY_COUNT; attempt++) {
+        if (sendto(sockfd, send_packet, send_length, 0, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+#ifdef WIN32
+            get_lasterror("Failed to send data");
+#else
+            perror("Failed to send data");
+#endif
+            return -1;
+        }
+
+        if (verbose_flag) {
+            print_packet(send_msg, (unsigned char *)send_packet, send_length);
+        }
+        if (logging_flag) {
+            logging(send_msg, (unsigned char *)send_packet, send_length);
+        }
+
+        recv_result = drcom_udp_recv_expected_packet(sockfd,
+                                                     addr,
+                                                     recv_packet,
+                                                     recv_length,
+                                                     recv_msg,
+                                                     expected_first_byte,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     expected_second_byte,
+                                                     expected_third_byte,
+                                                     expected_fourth_byte,
+                                                     expected_sixth_byte,
+                                                     minimum_length);
+        if (recv_result >= 0) {
+            return recv_result;
+        }
+
+        if (attempt < DRCOM_UDP_PACKET_RETRY_COUNT) {
+            printf("[Tips] UDP response timeout. Resending packet (%d/%d).\n", attempt + 1, DRCOM_UDP_PACKET_RETRY_COUNT);
+            if (logging_flag) {
+                logging("[Tips] UDP response timeout. Resending packet.", NULL, 0);
+            }
+        }
+    }
+
+#ifdef WIN32
+    get_lasterror("Failed to recv data");
+#else
+    perror("Failed to recv data");
+#endif
+    return -1;
+}
 
 int keepalive_1(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsigned char auth_information[]) {
     if (drcom_config.keepalive1_mod) {
         unsigned char keepalive_1_packet1[8] = {0x07, 0x01, 0x08, 0x00, 0x01, 0x00, 0x00, 0x00};
         unsigned char recv_packet1[1024], keepalive_1_packet2[38], recv_packet2[1024];
         memset(keepalive_1_packet2, 0, 38);
-        sendto(sockfd, keepalive_1_packet1, 8, 0, (struct sockaddr *)&addr, sizeof(addr));
-        if (verbose_flag) {
-            print_packet("[Keepalive1_packet1 sent] ", keepalive_1_packet1, 8);
-        }
-        if (logging_flag) {
-            logging("[Keepalive1_packet1 sent] ", keepalive_1_packet1, 8);
-        }
 #ifdef TEST
         printf("[TEST MODE]IN TEST MODE, PASS\n");
         return 0;
 #endif
-        socklen_t addrlen = sizeof(addr);
         while (1) {
-            if (recvfrom(sockfd, recv_packet1, 1024, 0, (struct sockaddr *)&addr, &addrlen) < 0) {
-#ifdef WIN32
-                get_lasterror("Failed to recv data");
-#else
-                perror("Failed to recv data");
-#endif
+            if (drcom_udp_send_recv_expected_with_retries(sockfd,
+                                                         addr,
+                                                         keepalive_1_packet1,
+                                                         8,
+                                                         recv_packet1,
+                                                         1024,
+                                                         "[Keepalive1_packet1 sent] ",
+                                                         "[Keepalive1 challenge_recv] ",
+                                                         0x07,
+                                                         DRCOM_UDP_EXPECT_ANY,
+                                                         DRCOM_UDP_EXPECT_ANY,
+                                                         DRCOM_UDP_EXPECT_ANY,
+                                                         DRCOM_UDP_EXPECT_ANY,
+                                                         12) < 0) {
                 return 1;
             } else {
-                if (verbose_flag) {
-                    print_packet("[Keepalive1 challenge_recv] ", recv_packet1, 100);
-                }
-                if (logging_flag) {
-                    logging("[Keepalive1 challenge_recv] ", recv_packet1, 100);
-                }
-
                 if (recv_packet1[0] == 0x07) {
                     break;
                 } else if (recv_packet1[0] == 0x4d) {
@@ -76,29 +275,22 @@ int keepalive_1(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsig
         keepalive_1_packet2[36] = rand() & 0xff;
         keepalive_1_packet2[37] = rand() & 0xff;
 
-        sendto(sockfd, keepalive_1_packet2, 38, 0, (struct sockaddr *)&addr, sizeof(addr));
-        if (verbose_flag) {
-            print_packet("[Keepalive1_packet2 sent] ", keepalive_1_packet2, 38);
-        }
-        if (logging_flag) {
-            logging("[Keepalive1_packet2 sent] ", keepalive_1_packet2, 38);
-        }
-
-        if (recvfrom(sockfd, recv_packet2, 1024, 0, (struct sockaddr *)&addr, &addrlen) < 0) {
-#ifdef WIN32
-            get_lasterror("Failed to recv data");
-#else
-            perror("Failed to recv data");
-#endif
+        if (drcom_udp_send_recv_expected_with_retries(sockfd,
+                                                     addr,
+                                                     keepalive_1_packet2,
+                                                     38,
+                                                     recv_packet2,
+                                                     1024,
+                                                     "[Keepalive1_packet2 sent] ",
+                                                     "[Keepalive1 recv] ",
+                                                     0x07,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     1) < 0) {
             return 1;
         } else {
-            if (verbose_flag) {
-                print_packet("[Keepalive1 recv] ", recv_packet2, 100);
-            }
-            if (logging_flag) {
-                logging("[Keepalive1 recv] ", recv_packet2, 100);
-            }
-
             if (recv_packet2[0] != 0x07) {
                 printf("Bad keepalive1 response received.\n");
                 return 1;
@@ -121,37 +313,28 @@ int keepalive_1(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsig
         keepalive_1_packet[36] = rand() & 0xff;
         keepalive_1_packet[37] = rand() & 0xff;
 
-        sendto(sockfd, keepalive_1_packet, 42, 0, (struct sockaddr *)&addr, sizeof(addr));
-
-        if (verbose_flag) {
-            print_packet("[Keepalive1 sent] ", keepalive_1_packet, 42);
-        }
-        if (logging_flag) {
-            logging("[Keepalive1 sent] ", keepalive_1_packet, 42);
-        }
-
 #ifdef TEST
         printf("[TEST MODE]IN TEST MODE, PASS\n");
         return 0;
 #endif
 
-        socklen_t addrlen = sizeof(addr);
         while (1) {
-            if (recvfrom(sockfd, recv_packet, 1024, 0, (struct sockaddr *)&addr, &addrlen) < 0) {
-#ifdef WIN32
-                get_lasterror("Failed to recv data");
-#else
-                perror("Failed to recv data");
-#endif
+            if (drcom_udp_send_recv_expected_with_retries(sockfd,
+                                                         addr,
+                                                         keepalive_1_packet,
+                                                         42,
+                                                         recv_packet,
+                                                         1024,
+                                                         "[Keepalive1 sent] ",
+                                                         "[Keepalive1 recv] ",
+                                                         0x07,
+                                                         DRCOM_UDP_EXPECT_ANY,
+                                                         DRCOM_UDP_EXPECT_ANY,
+                                                         DRCOM_UDP_EXPECT_ANY,
+                                                         DRCOM_UDP_EXPECT_ANY,
+                                                         1) < 0) {
                 return 1;
             } else {
-                if (verbose_flag) {
-                    print_packet("[Keepalive1 recv] ", recv_packet, 100);
-                }
-                if (logging_flag) {
-                    logging("[Keepalive1 recv] ", recv_packet, 100);
-                }
-
                 if (recv_packet[0] == 0x07) {
                     break;
                 } else if (recv_packet[0] == 0x4d) {
@@ -210,15 +393,14 @@ void gen_crc(unsigned char seed[], int encrypt_type, unsigned char crc[]) {
     }
 }
 
-void keepalive_2_packetbuilder(unsigned char keepalive_2_packet[], int keepalive_counter, int filepacket, int type, int encrypt_type) {
+void keepalive_2_packetbuilder(unsigned char keepalive_2_packet[], int keepalive_counter, int extra_packet_kind, int type, int encrypt_type) {
     keepalive_2_packet[0] = 0x07;
     keepalive_2_packet[1] = keepalive_counter;
     keepalive_2_packet[2] = 0x28;
     keepalive_2_packet[4] = 0x0b;
     keepalive_2_packet[5] = type;
-    if (filepacket) {
-        keepalive_2_packet[6] = 0x0f;
-        keepalive_2_packet[7] = 0x27;
+    if (extra_packet_kind == DRCOM_KEEPALIVE_EXTRA_FIRST || extra_packet_kind == DRCOM_KEEPALIVE_EXTRA_PERIODIC) {
+        memcpy(keepalive_2_packet + 6, DRCOM_KEEPALIVE_FIRST_VERSION, 2);
     } else {
         memcpy(keepalive_2_packet + 6, drcom_config.KEEP_ALIVE_VERSION, 2);
     }
@@ -227,11 +409,9 @@ void keepalive_2_packetbuilder(unsigned char keepalive_2_packet[], int keepalive
     if (type == 3) {
         unsigned char host_ip[4] = {0};
         if (strcmp(mode, "dhcp") == 0) {
-            sscanf(drcom_config.host_ip, "%hhd.%hhd.%hhd.%hhd",
-                   &host_ip[0],
-                   &host_ip[1],
-                   &host_ip[2],
-                   &host_ip[3]);
+            if (drcom_parse_ipv4_address(drcom_config.host_ip, host_ip) != 0) {
+                return;
+            }
             memcpy(keepalive_2_packet + 28, host_ip, 4);
         } else if (strcmp(mode, "pppoe") == 0) {
             unsigned char crc[8] = {0};
@@ -241,44 +421,38 @@ void keepalive_2_packetbuilder(unsigned char keepalive_2_packet[], int keepalive
     }
 }
 
-int keepalive_2(int sockfd, struct sockaddr_in addr, int *keepalive_counter, int *first, int *encrypt_type) {
+int keepalive_2(int sockfd, struct sockaddr_in addr, int *keepalive_counter, int extra_packet_kind, int *encrypt_type) {
     unsigned char keepalive_2_packet[40], recv_packet[1024], tail[4];
-    socklen_t addrlen = sizeof(addr);
 
 #ifdef TEST
     printf("[TEST MODE]IN TEST MODE, PASS\n");
 #else
-    if (*first) {
-        // send the file packet
+    if (extra_packet_kind != DRCOM_KEEPALIVE_EXTRA_NONE) {
+        int packet_counter = *keepalive_counter % 0xFF;
+        // send the first or periodic extra packet
         memset(keepalive_2_packet, 0, 40);
         if (strcmp(mode, "pppoe") == 0) {
-            keepalive_2_packetbuilder(keepalive_2_packet, *keepalive_counter % 0xFF, *first, 1, *encrypt_type);
+            keepalive_2_packetbuilder(keepalive_2_packet, packet_counter, extra_packet_kind, 1, *encrypt_type);
         } else {
-            keepalive_2_packetbuilder(keepalive_2_packet, *keepalive_counter % 0xFF, *first, 1, 0);
+            keepalive_2_packetbuilder(keepalive_2_packet, packet_counter, extra_packet_kind, 1, 0);
         }
         (*keepalive_counter)++;
 
-        sendto(sockfd, keepalive_2_packet, 40, 0, (struct sockaddr *)&addr, sizeof(addr));
-
-        if (verbose_flag) {
-            print_packet("[Keepalive2_file sent] ", keepalive_2_packet, 40);
-        }
-        if (logging_flag) {
-            logging("[Keepalive2_file sent] ", keepalive_2_packet, 40);
-        }
-        if (recvfrom(sockfd, recv_packet, 1024, 0, (struct sockaddr *)&addr, &addrlen) < 0) {
-#ifdef WIN32
-            get_lasterror("Failed to recv data");
-#else
-            perror("Failed to recv data");
-#endif
+        if (drcom_udp_send_recv_expected_with_retries(sockfd,
+                                                     addr,
+                                                     keepalive_2_packet,
+                                                     40,
+                                                     recv_packet,
+                                                     1024,
+                                                     "[Keepalive2_extra sent] ",
+                                                     "[Keepalive2_extra recv] ",
+                                                     0x07,
+                                                     packet_counter,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     3) < 0) {
             return 1;
-        }
-        if (verbose_flag) {
-            print_packet("[Keepalive2_file recv] ", recv_packet, 40);
-        }
-        if (logging_flag) {
-            logging("[Keepalive2_file recv] ", recv_packet, 40);
         }
 
         if (recv_packet[0] == 0x07) {
@@ -300,41 +474,35 @@ int keepalive_2(int sockfd, struct sockaddr_in addr, int *keepalive_counter, int
 #endif
 
     // send the first packet
-    *first = 0;
+    int first_packet_counter = *keepalive_counter % 0xFF;
     memset(keepalive_2_packet, 0, 40);
     if (strcmp(mode, "pppoe") == 0) {
-        keepalive_2_packetbuilder(keepalive_2_packet, *keepalive_counter % 0xFF, *first, 1, *encrypt_type);
+        keepalive_2_packetbuilder(keepalive_2_packet, first_packet_counter, DRCOM_KEEPALIVE_EXTRA_NONE, 1, *encrypt_type);
     } else {
-        keepalive_2_packetbuilder(keepalive_2_packet, *keepalive_counter % 0xFF, *first, 1, 0);
+        keepalive_2_packetbuilder(keepalive_2_packet, first_packet_counter, DRCOM_KEEPALIVE_EXTRA_NONE, 1, 0);
     }
     (*keepalive_counter)++;
-    sendto(sockfd, keepalive_2_packet, 40, 0, (struct sockaddr *)&addr, sizeof(addr));
-
-    if (verbose_flag) {
-        print_packet("[Keepalive2_A sent] ", keepalive_2_packet, 40);
-    }
-    if (logging_flag) {
-        logging("[Keepalive2_A sent] ", keepalive_2_packet, 40);
-    }
 
 #ifdef TEST
     unsigned char test[4] = {0x13, 0x38, 0xe2, 0x11};
     memcpy(tail, test, 4);
     print_packet("[TEST MODE]<PREP TAIL> ", tail, 4);
 #else
-    if (recvfrom(sockfd, recv_packet, 1024, 0, (struct sockaddr *)&addr, &addrlen) < 0) {
-#ifdef WIN32
-        get_lasterror("Failed to recv data");
-#else
-        perror("Failed to recv data");
-#endif
+    if (drcom_udp_send_recv_expected_with_retries(sockfd,
+                                                 addr,
+                                                 keepalive_2_packet,
+                                                 40,
+                                                 recv_packet,
+                                                 1024,
+                                                 "[Keepalive2_A sent] ",
+                                                 "[Keepalive2_B recv] ",
+                                                 0x07,
+                                                 first_packet_counter,
+                                                 0x28,
+                                                 DRCOM_UDP_EXPECT_ANY,
+                                                 0x02,
+                                                 20) < 0) {
         return 1;
-    }
-    if (verbose_flag) {
-        print_packet("[Keepalive2_B recv] ", recv_packet, 40);
-    }
-    if (logging_flag) {
-        logging("[Keepalive2_B recv] ", recv_packet, 40);
     }
 
     if (recv_packet[0] == 0x07) {
@@ -354,41 +522,36 @@ int keepalive_2(int sockfd, struct sockaddr_in addr, int *keepalive_counter, int
 #endif
 
     // send the third packet
+    int third_packet_counter = *keepalive_counter % 0xFF;
     memset(keepalive_2_packet, 0, 40);
     if (strcmp(mode, "pppoe") == 0) {
-        keepalive_2_packetbuilder(keepalive_2_packet, *keepalive_counter % 0xFF, *first, 3, *encrypt_type);
+        keepalive_2_packetbuilder(keepalive_2_packet, third_packet_counter, DRCOM_KEEPALIVE_EXTRA_NONE, 3, *encrypt_type);
     } else {
-        keepalive_2_packetbuilder(keepalive_2_packet, *keepalive_counter % 0xFF, *first, 3, 0);
+        keepalive_2_packetbuilder(keepalive_2_packet, third_packet_counter, DRCOM_KEEPALIVE_EXTRA_NONE, 3, 0);
     }
     memcpy(keepalive_2_packet + 16, tail, 4);
     (*keepalive_counter)++;
-    sendto(sockfd, keepalive_2_packet, 40, 0, (struct sockaddr *)&addr, sizeof(addr));
-
-    if (verbose_flag) {
-        print_packet("[Keepalive2_C sent] ", keepalive_2_packet, 40);
-    }
-    if (logging_flag) {
-        logging("[Keepalive2_C sent] ", keepalive_2_packet, 40);
-    }
 
 #ifdef TEST
     printf("[TEST MODE]IN TEST MODE, PASS\n");
     exit(0);
 #endif
 
-    if (recvfrom(sockfd, recv_packet, 1024, 0, (struct sockaddr *)&addr, &addrlen) < 0) {
-#ifdef WIN32
-        get_lasterror("Failed to recv data");
-#else
-        perror("Failed to recv data");
-#endif
+    if (drcom_udp_send_recv_expected_with_retries(sockfd,
+                                                 addr,
+                                                 keepalive_2_packet,
+                                                 40,
+                                                 recv_packet,
+                                                 1024,
+                                                 "[Keepalive2_C sent] ",
+                                                 "[Keepalive2_D recv] ",
+                                                 0x07,
+                                                 third_packet_counter,
+                                                 0x28,
+                                                 DRCOM_UDP_EXPECT_ANY,
+                                                 0x04,
+                                                 6) < 0) {
         return 1;
-    }
-    if (verbose_flag) {
-        print_packet("[Keepalive2_D recv] ", recv_packet, 40);
-    }
-    if (logging_flag) {
-        logging("[Keepalive2_D recv] ", recv_packet, 40);
     }
 
     if (recv_packet[0] == 0x07) {

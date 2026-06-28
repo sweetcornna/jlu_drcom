@@ -23,9 +23,13 @@ enum {
 
 int dhcp_challenge(int sockfd, struct sockaddr_in addr, unsigned char seed[]);
 int dhcp_login(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsigned char auth_information[], int try_JLUversion);
+int dhcp_logout_challenge(int sockfd, struct sockaddr_in addr, unsigned char seed[]);
+int dhcp_logout(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsigned char auth_information[]);
 int pppoe_challenge(int sockfd, struct sockaddr_in addr, int *pppoe_counter, unsigned char seed[], unsigned char sip[], int *encrypt_mode);
 int pppoe_login(int sockfd, struct sockaddr_in addr, int *pppoe_counter, unsigned char seed[], unsigned char sip[], int *first, int *encrypt_mode, int *encrypt_type);
 int dogcom(int try_times);
+void drcom_request_stop(void);
+int drcom_stop_requested(void);
 void print_packet(char msg[10], unsigned char *packet, int length);
 void logging(char msg[10], unsigned char *packet, int length);
 void get_lasterror(char *msg);

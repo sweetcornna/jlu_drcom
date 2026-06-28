@@ -73,6 +73,8 @@ chmod 600 /etc/drcom.conf
 /etc/init.d/drcom_openwrt restart
 ```
 
+当前成品包构建目标是 OpenWrt `24.10.7` 这一条 `opkg/ipk` 稳定线。OpenWrt `25.12` 及更新版本已经切换到 `apk` 包管理器，不能直接照搬这里的 `opkg install` 流程。
+
 安装完成后，可以在 LuCI 中进入：
 
 `服务 -> DrCOM`
@@ -147,8 +149,26 @@ ip route get 10.100.61.3
 - `password`
 - `host_ip`
 - `mac`
+- `profile`
+
+吉林大学推荐先使用：
+
+```ini
+profile='jlu-modern'
+```
+
+如果老网关拒绝，再尝试：
+
+```ini
+profile='jlu-legacy'
+```
+
+不使用 `profile` 时才需要手动填写：
+
 - `AUTH_VERSION`
 - `KEEP_ALIVE_VERSION`
+
+如果同时写了 `profile` 和手动兼容参数，手动参数优先；这方便你临时试老网关参数，不需要反复删除整段配置。
 
 一份典型配置如下：
 
@@ -166,11 +186,24 @@ dhcp_server='0.0.0.0'
 CONTROLCHECKSTATUS='\x20'
 ADAPTERNUM='\x05'
 IPDOG='\x01'
-AUTH_VERSION='\x2c\x00'
-KEEP_ALIVE_VERSION='\xdc\x02'
-ror_version=False
+profile='jlu-modern'
 keepalive1_mod=True
+startup_delay_seconds=60
 ```
+
+`startup_delay_seconds` 是启动保护时间。它不是登录重试时间，而是路由器刚启动时先等一小段时间，给认证端清理上一次在线状态；JLU profile 默认给 60 秒，`generic` 默认不等待，确认环境稳定后可以设为 `0`。
+
+### 大流量时容易下线怎么办
+
+吉林大学相关 C 实现提到，校园网环境下 UDP 丢包会让认证服务器收不到心跳包，从而导致客户端下线。本项目现在会对 DHCP challenge、logout、keepalive1、keepalive2 做同包超时重发：如果发送后 3 秒内没有收到回复，会最多重发 3 次，再把这一轮视为失败。登录正文包不做盲目重发，避免服务器已登录成功但成功回包丢失时，被重复登录包扰乱状态。
+
+因此如果日志里看到：
+
+```text
+UDP response timeout. Resending packet
+```
+
+这更像是认证 UDP 丢包或拥塞，而不是账号密码错误。若看到 `Ignoring unexpected UDP response while waiting for current packet`，表示客户端先收到了陈旧或无关的 UDP 包，已经跳过并继续等待当前阶段的正确响应。大流量下载、跑满 NAT 或无线回程不稳时，可以同时检查路由器 CPU、WAN 口错包、网线/交换机协商状态和校园网高峰期丢包。
 
 ### 关于 MAC 的写法
 
@@ -265,8 +298,7 @@ logread | grep -E 'drcom|dogcom|EAP'
 
 常见错误包括：
 
-- 少写了 `AUTH_VERSION`
-- 少写了 `KEEP_ALIVE_VERSION`
+- 没写 `profile`，又少写了 `AUTH_VERSION` / `KEEP_ALIVE_VERSION`
 - `mac` 格式不对
 - `True/False` 写法不对
 - 字符串引号不规范

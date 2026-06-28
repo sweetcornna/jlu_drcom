@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <signal.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -21,14 +22,44 @@ typedef int socklen_t;
 #include "keepalive.h"
 #include "libs/md4.h"
 #include "libs/md5.h"
+#include "protocol.h"
 #include "retry_policy.h"
 #include "libs/sha1.h"
 
 #define BIND_PORT 61440
 #define DEST_PORT 61440
-#define INITIAL_BOOT_LOGIN_DELAY_SECONDS 300
 
 static int login_retry_delay_seconds = DRCOM_DEFAULT_LOGIN_RETRY_DELAY_SECONDS;
+static volatile sig_atomic_t stop_requested = 0;
+
+void drcom_request_stop(void) {
+    stop_requested = 1;
+}
+
+int drcom_stop_requested(void) {
+    return stop_requested != 0;
+}
+
+static void close_udp_socket(int sockfd) {
+#ifdef WIN32
+    closesocket(sockfd);
+    WSACleanup();
+#else
+    close(sockfd);
+#endif
+}
+
+static void logout_before_stop_exit(int sockfd, struct sockaddr_in dest_addr, unsigned char auth_information[]) {
+    unsigned char logout_seed[4];
+
+    printf("[Tips] Stop requested. Logging out before exit.\n");
+    if (logging_flag) {
+        logging("[Tips] Stop requested. Logging out before exit.", NULL, 0);
+    }
+    if (dhcp_logout_challenge(sockfd, dest_addr, logout_seed) == 0) {
+        dhcp_logout(sockfd, dest_addr, logout_seed, auth_information);
+    }
+}
 
 static void reset_login_retry_delay(void) {
     login_retry_delay_seconds = DRCOM_DEFAULT_LOGIN_RETRY_DELAY_SECONDS;
@@ -85,12 +116,13 @@ static void maybe_delay_initial_login(void) {
     int uptime_seconds = read_system_uptime_seconds();
     int wait_seconds;
     char wait_msg[160];
+    int startup_delay_seconds = drcom_config.startup_delay_seconds;
 
-    if (uptime_seconds <= 0 || uptime_seconds >= INITIAL_BOOT_LOGIN_DELAY_SECONDS) {
+    if (startup_delay_seconds <= 0 || uptime_seconds <= 0 || uptime_seconds >= startup_delay_seconds) {
         return;
     }
 
-    wait_seconds = INITIAL_BOOT_LOGIN_DELAY_SECONDS - uptime_seconds;
+    wait_seconds = startup_delay_seconds - uptime_seconds;
     snprintf(wait_msg,
              sizeof(wait_msg),
              "[Tips] Initial boot grace period is active. Delaying first login attempt for %d seconds after system startup.",
@@ -151,14 +183,6 @@ int dhcp_challenge(int sockfd, struct sockaddr_in addr, unsigned char seed[]) {
     challenge_packet[3] = rand() & 0xff;
     challenge_packet[4] = drcom_config.AUTH_VERSION[0];
 
-    sendto(sockfd, challenge_packet, 20, 0, (struct sockaddr *)&addr, sizeof(addr));
-
-    if (verbose_flag) {
-        print_packet("[Challenge sent] ", challenge_packet, 20);
-    }
-    if (logging_flag) {
-        logging("[Challenge sent] ", challenge_packet, 20);
-    }
 #ifdef TEST
     unsigned char test[4] = {0x52, 0x6c, 0xe4, 0x00};
     memcpy(seed, test, 4);
@@ -166,24 +190,24 @@ int dhcp_challenge(int sockfd, struct sockaddr_in addr, unsigned char seed[]) {
     return 0;
 #endif
 
-    socklen_t addrlen = sizeof(addr);
     reset_login_retry_delay();
 
-    int recv_length = recvfrom(sockfd, recv_packet, 1024, 0, (struct sockaddr *)&addr, &addrlen);
+    int recv_length = drcom_udp_send_recv_expected_with_retries(sockfd,
+                                                               addr,
+                                                               challenge_packet,
+                                                               20,
+                                                               recv_packet,
+                                                               1024,
+                                                               "[Challenge sent] ",
+                                                               "[Challenge recv] ",
+                                                               0x02,
+                                                               challenge_packet[1],
+                                                               challenge_packet[2],
+                                                               challenge_packet[3],
+                                                               DRCOM_UDP_EXPECT_ANY,
+                                                               8);
     if (recv_length < 0) {
-#ifdef WIN32
-        get_lasterror("Failed to recv data");
-#else
-        perror("Failed to recv data");
-#endif
         return 1;
-    }
-
-    if (verbose_flag) {
-        print_packet("[Challenge recv] ", recv_packet, 76);
-    }
-    if (logging_flag) {
-        logging("[Challenge recv] ", recv_packet, 76);
     }
 
     if (recv_packet[0] != 0x02) {
@@ -201,27 +225,23 @@ int dhcp_challenge(int sockfd, struct sockaddr_in addr, unsigned char seed[]) {
 
 int dhcp_login(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsigned char auth_information[], int try_JLUversion) {
     unsigned int login_packet_size;
-    unsigned int length_padding = 0;
     int JLU_padding = 0;
+    size_t password_length = strlen(drcom_config.password);
+    size_t username_length = strlen(drcom_config.username);
+    int use_ror_version = drcom_config.ror_version || try_JLUversion;
 
-    if (strlen(drcom_config.password) > 8) {
-        length_padding = strlen(drcom_config.password) - 8 + (length_padding % 2);
+    if (password_length > 8) {
         if (try_JLUversion) {
             printf("Start JLU mode.\n");
             if (logging_flag) {
                 logging("Start JLU mode.", NULL, 0);
             }
-            if (strlen(drcom_config.password) != 16) {
-                JLU_padding = strlen(drcom_config.password) / 4;
+            if (password_length != 16) {
+                JLU_padding = (int)(password_length / 4);
             }
-            length_padding = 28 + (strlen(drcom_config.password) - 8) + JLU_padding;
         }
     }
-    if (drcom_config.ror_version) {
-        login_packet_size = 338 + length_padding;
-    } else {
-        login_packet_size = 330;
-    }
+    login_packet_size = drcom_dhcp_login_packet_size(password_length, drcom_config.ror_version, try_JLUversion);
     unsigned char login_packet[login_packet_size], recv_packet[1024], MD5A[16], MACxorMD5A[6], MD5B[16], checksum1[8], checksum2[4];
     memset(login_packet, 0, login_packet_size);
     memset(recv_packet, 0, 100);
@@ -230,16 +250,16 @@ int dhcp_login(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsign
     login_packet[0] = 0x03;
     login_packet[1] = 0x01;
     login_packet[2] = 0x00;
-    login_packet[3] = strlen(drcom_config.username) + 20;
-    int MD5A_len = 6 + strlen(drcom_config.password);
+    login_packet[3] = username_length + 20;
+    int MD5A_len = 6 + password_length;
     unsigned char MD5A_str[MD5A_len];
     MD5A_str[0] = 0x03;
     MD5A_str[1] = 0x01;
     memcpy(MD5A_str + 2, seed, 4);
-    memcpy(MD5A_str + 6, drcom_config.password, strlen(drcom_config.password));
+    memcpy(MD5A_str + 6, drcom_config.password, password_length);
     MD5(MD5A_str, MD5A_len, MD5A);
     memcpy(login_packet + 4, MD5A, 16);
-    memcpy(login_packet + 20, drcom_config.username, strlen(drcom_config.username));
+    memcpy(login_packet + 20, drcom_config.username, username_length);
     memcpy(login_packet + 56, &drcom_config.CONTROLCHECKSTATUS, 1);
     memcpy(login_packet + 57, &drcom_config.ADAPTERNUM, 1);
     uint64_t sum = 0;
@@ -259,21 +279,20 @@ int dhcp_login(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsign
         sum /= 256;
     }
     memcpy(login_packet + 58, MACxorMD5A, sizeof(MACxorMD5A));
-    int MD5B_len = 9 + strlen(drcom_config.password);
+    int MD5B_len = 9 + password_length;
     unsigned char MD5B_str[MD5B_len];
     memset(MD5B_str, 0, MD5B_len);
     MD5B_str[0] = 0x01;
-    memcpy(MD5B_str + 1, drcom_config.password, strlen(drcom_config.password));
-    memcpy(MD5B_str + strlen(drcom_config.password) + 1, seed, 4);
+    memcpy(MD5B_str + 1, drcom_config.password, password_length);
+    memcpy(MD5B_str + password_length + 1, seed, 4);
     MD5(MD5B_str, MD5B_len, MD5B);
     memcpy(login_packet + 64, MD5B, 16);
     login_packet[80] = 0x01;
     unsigned char host_ip[4];
-    sscanf(drcom_config.host_ip, "%hhd.%hhd.%hhd.%hhd",
-           &host_ip[0],
-           &host_ip[1],
-           &host_ip[2],
-           &host_ip[3]);
+    if (drcom_parse_ipv4_address(drcom_config.host_ip, host_ip) != 0) {
+        fprintf(stderr, "Invalid host_ip value.\n");
+        return 1;
+    }
     memcpy(login_packet + 81, host_ip, 4);
     unsigned char checksum1_str[101], checksum1_tmp[4] = {0x14, 0x00, 0x07, 0x0b};
     memcpy(checksum1_str, login_packet, 97);
@@ -283,18 +302,16 @@ int dhcp_login(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsign
     memcpy(login_packet + 105, &drcom_config.IPDOG, 1);
     memcpy(login_packet + 110, &drcom_config.host_name, strlen(drcom_config.host_name));
     unsigned char PRIMARY_DNS[4];
-    sscanf(drcom_config.PRIMARY_DNS, "%hhd.%hhd.%hhd.%hhd",
-           &PRIMARY_DNS[0],
-           &PRIMARY_DNS[1],
-           &PRIMARY_DNS[2],
-           &PRIMARY_DNS[3]);
+    if (drcom_parse_ipv4_address(drcom_config.PRIMARY_DNS, PRIMARY_DNS) != 0) {
+        fprintf(stderr, "Invalid PRIMARY_DNS value.\n");
+        return 1;
+    }
     memcpy(login_packet + 142, PRIMARY_DNS, 4);
     unsigned char dhcp_server[4];
-    sscanf(drcom_config.dhcp_server, "%hhd.%hhd.%hhd.%hhd",
-           &dhcp_server[0],
-           &dhcp_server[1],
-           &dhcp_server[2],
-           &dhcp_server[3]);
+    if (drcom_parse_ipv4_address(drcom_config.dhcp_server, dhcp_server) != 0) {
+        fprintf(stderr, "Invalid dhcp_server value.\n");
+        return 1;
+    }
     memcpy(login_packet + 146, dhcp_server, 4);
     unsigned char OSVersionInfoSize[4] = {0x94};
     unsigned char OSMajor[4] = {0x05};
@@ -324,25 +341,25 @@ int dhcp_login(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsign
     memcpy(login_packet + 310, drcom_config.AUTH_VERSION, 2);
     int counter = 312;
     unsigned int ror_padding = 0;
-    if (strlen(drcom_config.password) <= 8) {
-        ror_padding = 8 - strlen(drcom_config.password);
+    if (password_length <= 8) {
+        ror_padding = 8 - password_length;
     } else {
-        if ((strlen(drcom_config.password) - 8) % 2) {
+        if ((password_length - 8) % 2) {
             ror_padding = 1;
         }
         if (try_JLUversion) {
             ror_padding = JLU_padding;
         }
     }
-    if (drcom_config.ror_version) {
+    if (use_ror_version) {
         MD5(MD5A_str, MD5A_len, MD5A);
-        login_packet[counter + 1] = strlen(drcom_config.password);
+        login_packet[counter + 1] = password_length;
         counter += 2;
-        for (int i = 0, x = 0; i < strlen(drcom_config.password); i++) {
+        for (int i = 0, x = 0; i < (int)password_length; i++) {
             x = (int)MD5A[i] ^ (int)drcom_config.password[i];
             login_packet[counter + i] = (unsigned char)(((x << 3) & 0xff) + (x >> 5));
         }
-        counter += strlen(drcom_config.password);
+        counter += password_length;
         // print_packet("TEST ", ror, strlen(drcom_config.password));
     } else {
         ror_padding = 2;
@@ -378,6 +395,14 @@ int dhcp_login(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsign
         login_packet[counter + ror_padding + 15] = 0xa2;
     }
 
+#ifdef TEST
+    unsigned char test[16] = {0x44, 0x72, 0x63, 0x6f, 0x77, 0x27, 0x20, 0xca, 0xed, 0x05, 0x6e, 0x35, 0xaa, 0x8b, 0x01, 0xfb};
+    memcpy(auth_information, test, 16);
+    print_packet("[TEST MODE]<PREP AUTH_INFORMATION> ", auth_information, 16);
+    return 0;
+#endif
+
+    socklen_t addrlen = sizeof(addr);
     sendto(sockfd, login_packet, sizeof(login_packet), 0, (struct sockaddr *)&addr, sizeof(addr));
 
     if (verbose_flag) {
@@ -387,21 +412,32 @@ int dhcp_login(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsign
         logging("[Login sent] ", login_packet, sizeof(login_packet));
     }
 
-#ifdef TEST
-    unsigned char test[16] = {0x44, 0x72, 0x63, 0x6f, 0x77, 0x27, 0x20, 0xca, 0xed, 0x05, 0x6e, 0x35, 0xaa, 0x8b, 0x01, 0xfb};
-    memcpy(auth_information, test, 16);
-    print_packet("[TEST MODE]<PREP AUTH_INFORMATION> ", auth_information, 16);
-    return 0;
-#endif
-
-    socklen_t addrlen = sizeof(addr);
-    int recv_length = recvfrom(sockfd, recv_packet, 1024, 0, (struct sockaddr *)&addr, &addrlen);
+    int recv_length = drcom_udp_recv_expected_packet(sockfd,
+                                                     addr,
+                                                     recv_packet,
+                                                     1024,
+                                                     "[login recv] ",
+                                                     0x04,
+                                                     0x05,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     DRCOM_UDP_EXPECT_ANY,
+                                                     1);
     if (recv_length < 0) {
 #ifdef WIN32
         get_lasterror("Failed to recv data");
 #else
         perror("Failed to recv data");
 #endif
+        return 1;
+    }
+
+    if (recv_packet[0] == 0x04 && recv_length < 39) {
+        printf("Bad short login response received.\n");
+        if (logging_flag) {
+            logging("Bad short login response received.", NULL, 0);
+        }
         return 1;
     }
 
@@ -416,53 +452,58 @@ int dhcp_login(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsign
         }
         char err_msg[256];
         if (recv_packet[0] == 0x05) {
-            int retry_after_seconds = extract_retry_after_seconds(recv_packet, recv_length);
-            set_login_retry_delay(drcom_retry_delay_for_login_reply(recv_packet[4], recv_length, retry_after_seconds));
-            switch (recv_packet[4]) {
-                case CHECK_MAC:
-                    strcpy(err_msg, "[Tips] Someone is using this account with wired.");
-                    break;
-                case SERVER_BUSY:
-                    strcpy(err_msg, "[Tips] The server is busy, please log back in again.");
-                    break;
-                case WRONG_PASS:
-                    if (recv_length <= 5) {
-                        strcpy(err_msg, "[Tips] Server returned a short generic credential rejection. This is usually a temporary template-side rejection rather than a confirmed password error. Local retry is 3 seconds so the client can probe the alternate login template quickly.");
-                    } else {
-                        strcpy(err_msg, "[Tips] Account and password not match.");
-                    }
-                    break;
-                case NOT_ENOUGH:
-                    strcpy(err_msg, "[Tips] The cumulative time or traffic for this account has exceeded the limit.");
-                    break;
-                case FREEZE_UP:
-                    strcpy(err_msg, "[Tips] This account is suspended.");
-                    break;
-                case NOT_ON_THIS_IP:
-                    strcpy(err_msg, "[Tips] IP address does not match, this account can only be used in the specified IP address.");
-                    break;
-                case NOT_ON_THIS_MAC:
-                    strcpy(err_msg, "[Tips] MAC address does not match, this account can only be used in the specified IP and MAC address.");
-                    break;
-                case TOO_MUCH_IP:
-                    strcpy(err_msg, "[Tips] This account has too many IP addresses.");
-                    break;
-                case UPDATE_CLIENT:
-                    if (retry_after_seconds > 0) {
-                        snprintf(err_msg, sizeof(err_msg), "[Tips] Server forced this account offline and reported a cooldown of %d seconds. Local retry follows the reported cooldown.", retry_after_seconds);
-                    } else {
-                        strcpy(err_msg, "[Tips] The server rejected the current client signature/version. Local retry remains fixed at 60 seconds.");
-                    }
-                    break;
-                case NOT_ON_THIS_IP_MAC:
-                    strcpy(err_msg, "[Tips] This account can only be used on specified MAC and IP address.");
-                    break;
-                case MUST_USE_DHCP:
-                    strcpy(err_msg, "[Tips] Your PC set up a static IP, please change to DHCP, and then re-login.");
-                    break;
-                default:
-                    strcpy(err_msg, "[Tips] Unknown error number.");
-                    break;
+            if (recv_length <= 4) {
+                set_login_retry_delay(DRCOM_SHORT_GENERIC_RETRY_DELAY_SECONDS);
+                strcpy(err_msg, "[Tips] Server returned a short generic credential rejection. This is usually a temporary template-side rejection rather than a confirmed password error. Local retry is 3 seconds so the client can probe the alternate login template quickly.");
+            } else {
+                int retry_after_seconds = extract_retry_after_seconds(recv_packet, recv_length);
+                set_login_retry_delay(drcom_retry_delay_for_login_reply(recv_packet[4], recv_length, retry_after_seconds));
+                switch (recv_packet[4]) {
+                    case CHECK_MAC:
+                        strcpy(err_msg, "[Tips] Someone is using this account with wired.");
+                        break;
+                    case SERVER_BUSY:
+                        strcpy(err_msg, "[Tips] The server is busy, please log back in again.");
+                        break;
+                    case WRONG_PASS:
+                        if (recv_length <= 5) {
+                            strcpy(err_msg, "[Tips] Server returned a short generic credential rejection. This is usually a temporary template-side rejection rather than a confirmed password error. Local retry is 3 seconds so the client can probe the alternate login template quickly.");
+                        } else {
+                            strcpy(err_msg, "[Tips] Account and password not match.");
+                        }
+                        break;
+                    case NOT_ENOUGH:
+                        strcpy(err_msg, "[Tips] The cumulative time or traffic for this account has exceeded the limit.");
+                        break;
+                    case FREEZE_UP:
+                        strcpy(err_msg, "[Tips] This account is suspended.");
+                        break;
+                    case NOT_ON_THIS_IP:
+                        strcpy(err_msg, "[Tips] IP address does not match, this account can only be used in the specified IP address.");
+                        break;
+                    case NOT_ON_THIS_MAC:
+                        strcpy(err_msg, "[Tips] MAC address does not match, this account can only be used in the specified IP and MAC address.");
+                        break;
+                    case TOO_MUCH_IP:
+                        strcpy(err_msg, "[Tips] This account has too many IP addresses.");
+                        break;
+                    case UPDATE_CLIENT:
+                        if (retry_after_seconds > 0) {
+                            snprintf(err_msg, sizeof(err_msg), "[Tips] Server forced this account offline and reported a cooldown of %d seconds. Local retry follows the reported cooldown.", retry_after_seconds);
+                        } else {
+                            strcpy(err_msg, "[Tips] The server rejected the current client signature/version. Local retry remains fixed at 60 seconds.");
+                        }
+                        break;
+                    case NOT_ON_THIS_IP_MAC:
+                        strcpy(err_msg, "[Tips] This account can only be used on specified MAC and IP address.");
+                        break;
+                    case MUST_USE_DHCP:
+                        strcpy(err_msg, "[Tips] Your PC set up a static IP, please change to DHCP, and then re-login.");
+                        break;
+                    default:
+                        strcpy(err_msg, "[Tips] Unknown error number.");
+                        break;
+                }
             }
             printf("%s\n", err_msg);
             if (logging_flag) {
@@ -490,6 +531,76 @@ int dhcp_login(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsign
         DEBUG_PRINT(("Get notice packet."));
     }
 
+    return 0;
+}
+
+int dhcp_logout_challenge(int sockfd, struct sockaddr_in addr, unsigned char seed[]) {
+    unsigned char challenge_packet[20], recv_packet[1024];
+    memset(challenge_packet, 0, sizeof(challenge_packet));
+    challenge_packet[0] = 0x01;
+    challenge_packet[1] = 0x03;
+    challenge_packet[2] = rand() & 0xff;
+    challenge_packet[3] = rand() & 0xff;
+    challenge_packet[4] = drcom_config.AUTH_VERSION[0];
+
+    int recv_length = drcom_udp_send_recv_expected_with_retries(sockfd,
+                                                               addr,
+                                                               challenge_packet,
+                                                               sizeof(challenge_packet),
+                                                               recv_packet,
+                                                               sizeof(recv_packet),
+                                                               "[Logout challenge sent] ",
+                                                               "[Logout challenge recv] ",
+                                                               0x02,
+                                                               challenge_packet[1],
+                                                               challenge_packet[2],
+                                                               challenge_packet[3],
+                                                               DRCOM_UDP_EXPECT_ANY,
+                                                               8);
+    if (recv_length < 0) {
+        return 1;
+    }
+
+    if (recv_packet[0] != 0x02) {
+        printf("Bad logout challenge response received.\n");
+        return 1;
+    }
+
+    memcpy(seed, &recv_packet[4], 4);
+    return 0;
+}
+
+int dhcp_logout(int sockfd, struct sockaddr_in addr, unsigned char seed[], unsigned char auth_information[]) {
+    unsigned char logout_packet[DRCOM_DHCP_LOGOUT_PACKET_SIZE], recv_packet[1024];
+
+    drcom_build_dhcp_logout_packet(&drcom_config, seed, auth_information, logout_packet);
+    int recv_length = drcom_udp_send_recv_expected_with_retries(sockfd,
+                                                               addr,
+                                                               logout_packet,
+                                                               sizeof(logout_packet),
+                                                               recv_packet,
+                                                               sizeof(recv_packet),
+                                                               "[Logout sent] ",
+                                                               "[Logout recv] ",
+                                                               0x04,
+                                                               DRCOM_UDP_EXPECT_ANY,
+                                                               DRCOM_UDP_EXPECT_ANY,
+                                                               DRCOM_UDP_EXPECT_ANY,
+                                                               DRCOM_UDP_EXPECT_ANY,
+                                                               1);
+    if (recv_length < 0) {
+        return 1;
+    }
+
+    if (recv_packet[0] != 0x04) {
+        printf("Bad logout response received.\n");
+        return 1;
+    }
+
+    printf("<<< Logged out >>>\n");
+    if (logging_flag) {
+        logging("<<< Logged out >>>", NULL, 0);
+    }
     return 0;
 }
 
@@ -706,6 +817,7 @@ int dogcom(int try_times) {
 #else
         perror("Failed to bind socket");
 #endif
+        close_udp_socket(sockfd);
         return 1;
     }
 
@@ -723,49 +835,82 @@ int dogcom(int try_times) {
 #else
         perror("Failed to set sock opt");
 #endif
+        close_udp_socket(sockfd);
         return 1;
     }
 
     maybe_delay_initial_login();
+    if (drcom_stop_requested()) {
+        close_udp_socket(sockfd);
+        return 0;
+    }
 
     // start dogcoming
     if (strcmp(mode, "dhcp") == 0) {
         int login_failed_attempts = 0;
         int try_JLUversion = 0;
         for (int try_counter = 0; try_counter < try_times; try_counter++) {
+            if (drcom_stop_requested()) {
+                close_udp_socket(sockfd);
+                return 0;
+            }
             if (eternal_flag) {
                 try_counter = 0;
             }
             unsigned char seed[4];
             unsigned char auth_information[16];
             if (dhcp_challenge(sockfd, dest_addr, seed)) {
+                if (drcom_stop_requested()) {
+                    close_udp_socket(sockfd);
+                    return 0;
+                }
                 sleep_before_retry(current_login_retry_delay());
             } else {
                 int reconnect_after_keepalive_failure = 0;
                 usleep(200000);  // 0.2 sec
-                if (login_failed_attempts > 2) {
-                    try_JLUversion = login_failed_attempts % 2;
-                    if (!try_JLUversion) {
+                try_JLUversion = drcom_login_template_for_attempt(drcom_config.jlu_mode, login_failed_attempts);
+                if (login_failed_attempts > 2 && !drcom_config.jlu_mode) {
+                    if (try_JLUversion == DRCOM_LOGIN_TEMPLATE_STANDARD) {
                         printf("[Tips] Switching back to the standard Windows login template for this retry.\n");
                         if (logging_flag) {
                             logging("[Tips] Switching back to the standard Windows login template for this retry.", NULL, 0);
                         }
                     }
-                } else {
-                    try_JLUversion = 0;
                 }
                 if (!dhcp_login(sockfd, dest_addr, seed, auth_information, try_JLUversion)) {
                     int keepalive_counter = 0;
                     int keepalive_try_counter = 0;
-                    int first = 1;
+                    int keepalive_rounds = 0;
                     login_failed_attempts = 0;
                     reset_login_retry_delay();
                     while (1) {
+                        if (drcom_stop_requested()) {
+                            logout_before_stop_exit(sockfd, dest_addr, auth_information);
+                            close_udp_socket(sockfd);
+                            return 0;
+                        }
                         if (!keepalive_1(sockfd, dest_addr, seed, auth_information)) {
+                            int extra_packet_kind = DRCOM_KEEPALIVE_EXTRA_NONE;
                             usleep(200000);  // 0.2 sec
-                            if (keepalive_2(sockfd, dest_addr, &keepalive_counter, &first, 0)) {
+                            if (drcom_config.jlu_mode) {
+                                extra_packet_kind = drcom_keepalive_extra_packet_kind(keepalive_rounds);
+                            } else if (keepalive_rounds == 0) {
+                                extra_packet_kind = DRCOM_KEEPALIVE_EXTRA_FIRST;
+                            }
+                            if (keepalive_2(sockfd, dest_addr, &keepalive_counter, extra_packet_kind, NULL)) {
+                                keepalive_try_counter = drcom_next_keepalive_failure_count(keepalive_try_counter, 0);
+                                if (drcom_should_reconnect_after_keepalive_failure(keepalive_try_counter)) {
+                                    set_login_retry_delay(DRCOM_DEFAULT_LOGIN_RETRY_DELAY_SECONDS);
+                                    printf("[Tips] Keepalive failed repeatedly. Backing off before re-login.\n");
+                                    if (logging_flag) {
+                                        logging("[Tips] Keepalive failed repeatedly. Backing off before re-login.", NULL, 0);
+                                    }
+                                    reconnect_after_keepalive_failure = 1;
+                                    break;
+                                }
                                 continue;
                             }
+                            keepalive_rounds++;
                             keepalive_try_counter = drcom_next_keepalive_failure_count(keepalive_try_counter, 1);
                             if (verbose_flag) {
                                 printf("Keepalive in loop.\n");
@@ -788,11 +933,20 @@ int dogcom(int try_times) {
                             continue;
                         }
                     }
+                    if (drcom_stop_requested()) {
+                        logout_before_stop_exit(sockfd, dest_addr, auth_information);
+                        close_udp_socket(sockfd);
+                        return 0;
+                    }
                     if (reconnect_after_keepalive_failure) {
                         sleep_before_retry(current_login_retry_delay());
                     }
                 } else {
                     login_failed_attempts += 1;
+                    if (drcom_stop_requested()) {
+                        close_udp_socket(sockfd);
+                        return 0;
+                    }
                     sleep_before_retry(current_login_retry_delay());
                 };
             }
@@ -807,6 +961,10 @@ int dogcom(int try_times) {
         int encrypt_type = 0;
         int try_counter = 0;
         while (1) {
+            if (drcom_stop_requested()) {
+                close_udp_socket(sockfd);
+                return 0;
+            }
             if (pppoe_challenge(sockfd, dest_addr, &pppoe_counter, seed, sip, &encrypt_mode)) {
                 printf("Retrying...\n");
                 if (logging_flag) {
@@ -828,9 +986,10 @@ int dogcom(int try_times) {
                     continue;
                 } else {
                     login_first = 0;
-                    if (keepalive_2(sockfd, dest_addr, &keepalive_counter, &first, &encrypt_type)) {
+                    if (keepalive_2(sockfd, dest_addr, &keepalive_counter, first ? DRCOM_KEEPALIVE_EXTRA_FIRST : DRCOM_KEEPALIVE_EXTRA_NONE, &encrypt_type)) {
                         continue;
                     } else {
+                        first = 0;
                         if (verbose_flag) {
                             printf("PPPoE in loop.\n");
                         }
@@ -849,12 +1008,7 @@ int dogcom(int try_times) {
     if (logging_flag) {
         logging(">>>>> Failed to keep in touch with server, exiting <<<<<", NULL, 0);
     }
-#ifdef WIN32
-    closesocket(sockfd);
-    WSACleanup();
-#else
-    close(sockfd);
-#endif
+    close_udp_socket(sockfd);
     return 1;
 }
 
@@ -868,13 +1022,24 @@ void print_packet(char msg[10], unsigned char *packet, int length) {
 
 void logging(char msg[10], unsigned char *packet, int length) {
     FILE *ptr_file;
+    if (log_path == NULL || msg == NULL) {
+        return;
+    }
+
     ptr_file = fopen(log_path, "a");
+    if (ptr_file == NULL) {
+        return;
+    }
 
     char *wday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     time_t timep;
     struct tm *p;
     time(&timep);
     p = localtime(&timep);
+    if (p == NULL) {
+        fclose(ptr_file);
+        return;
+    }
     fprintf(ptr_file, "[%04d/%02d/%02d %s %02d:%02d:%02d] ",
             (1900 + p->tm_year), (1 + p->tm_mon), p->tm_mday, wday[p->tm_wday], p->tm_hour, p->tm_min, p->tm_sec);
 

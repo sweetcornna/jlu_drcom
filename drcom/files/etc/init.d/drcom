@@ -64,7 +64,7 @@ kill_port_pids() {
 }
 
 ensure_bind_port_available() {
-	local lines pids owners remaining remaining_pids pid_list
+	local lines pids owners remaining remaining_pids pid_list wait
 
 	lines="$(get_port_lines)"
 	if [ -z "$lines" ]; then
@@ -84,9 +84,13 @@ ensure_bind_port_available() {
 
 	pid_list="$(printf '%s' "$pids" | tr ',' ' ')"
 	kill_port_pids TERM $pid_list
-	sleep 1
 
-	remaining="$(get_port_lines)"
+	for wait in 1 2 3 4 5 6 7 8 9 10; do
+		sleep 1
+		remaining="$(get_port_lines)"
+		[ -n "$remaining" ] || break
+	done
+
 	if [ -n "$remaining" ]; then
 		remaining_pids="$(printf '%s\n' "$remaining" | collect_port_pids)"
 		if [ -n "$remaining_pids" ]; then
@@ -117,6 +121,7 @@ start_service() {
 	procd_set_param command "$SERVICE_BIN" -m dhcp -c "$CONF_PATH" -e -l "$LOG_PATH"
 	procd_set_param respawn
 	procd_set_param file "$CONF_PATH"
+	procd_set_param term_timeout 10
 	procd_set_param stdout 1
 	procd_set_param stderr 1
 	procd_close_instance

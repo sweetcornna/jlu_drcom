@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=drcom
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=13
+PKG_RELEASE:=14
 
 PKG_MAINTAINER:=ymylive
 PKG_LICENSE:=AGPL-3.0-or-later
@@ -16,7 +16,7 @@ define Package/drcom
   CATEGORY:=Network
   TITLE:=OpenWrt DrCOM client service with LuCI dashboard
   URL:=https://github.com/ymylive/drcom
-  DEPENDS:=+luci-base
+  DEPENDS:=+luci-base +luci-lua-runtime
 endef
 
 define Package/drcom/description
@@ -35,18 +35,12 @@ define Package/drcom/postinst
 if [ -x /etc/init.d/uhttpd ]; then
   /etc/init.d/uhttpd reload >/dev/null 2>&1 || true
 fi
-if [ -x /etc/init.d/drcom ] && [ -x /usr/bin/drcom ]; then
-  /etc/init.d/drcom enable >/dev/null 2>&1 || true
-fi
 exit 0
 endef
 
 define Package/drcom/prerm
 #!/bin/sh
 [ -n "$$IPKG_INSTROOT" ] && exit 0
-if [ -x /etc/init.d/drcom ]; then
-  /etc/init.d/drcom stop >/dev/null 2>&1 || true
-fi
 exit 0
 endef
 

@@ -138,20 +138,36 @@ local function validate_config(conf)
 		"username",
 		"password",
 		"host_ip",
-		"mac",
-		"AUTH_VERSION",
-		"KEEP_ALIVE_VERSION"
+		"mac"
 	}
+	local using_profile = trim(conf.keys.profile) ~= ""
 	local missing_keys = {}
 	local warnings = {}
+	local invalid_keys = {}
 	local function add_warning(key, text)
 		append_value(warnings, localized_message(key, text))
+	end
+	local function add_invalid(key)
+		append_value(invalid_keys, key)
+	end
+	local function is_parser_bool(value)
+		return value == "True" or value == "False" or value == "1" or value == "0"
+	end
+
+	if not using_profile then
+		append_value(required_keys, "AUTH_VERSION")
+		append_value(required_keys, "KEEP_ALIVE_VERSION")
 	end
 
 	for _, key in ipairs(required_keys) do
 		if trim(conf.keys[key]) == "" then
 			append_value(missing_keys, key)
 		end
+	end
+
+	if using_profile and conf.keys.profile ~= "jlu-modern" and conf.keys.profile ~= "jlu-legacy" and conf.keys.profile ~= "generic" then
+		add_invalid("profile")
+		add_warning("config.warning.profile", "profile should be jlu-modern, jlu-legacy, or generic.")
 	end
 
 	if conf.keys.server ~= nil and conf.keys.server ~= "" and not conf.keys.server:match("^%d+%.%d+%.%d+%.%d+$") then
@@ -169,12 +185,30 @@ local function validate_config(conf)
 		add_warning("config.warning.macFormat", "mac should use either 0xB025AA851014 or B0:25:AA:85:10:14.")
 	end
 
-	if conf.keys.ror_version ~= nil and conf.keys.ror_version ~= "" and conf.keys.ror_version ~= "True" and conf.keys.ror_version ~= "False" then
-		add_warning("config.warning.rorVersion", "ror_version should be True or False.")
+	if conf.keys.ror_version ~= nil and conf.keys.ror_version ~= "" and not is_parser_bool(conf.keys.ror_version) then
+		add_invalid("ror_version")
+		add_warning("config.warning.rorVersion", "ror_version should be True, False, 1, or 0.")
+	end
+
+	if conf.keys.jlu_mode ~= nil and conf.keys.jlu_mode ~= "" and not is_parser_bool(conf.keys.jlu_mode) then
+		add_invalid("jlu_mode")
+		add_warning("config.warning.jluMode", "jlu_mode should be True, False, 1, or 0.")
+	end
+
+	if conf.keys.startup_delay_seconds ~= nil and conf.keys.startup_delay_seconds ~= "" then
+		local raw_startup_delay_seconds = trim(conf.keys.startup_delay_seconds)
+		local startup_delay_seconds = tonumber(raw_startup_delay_seconds)
+		if not raw_startup_delay_seconds:match("^%d+$") or startup_delay_seconds == nil or startup_delay_seconds > 1800 then
+			add_invalid("startup_delay_seconds")
+			add_warning("config.warning.startupDelay", "startup_delay_seconds should be an integer from 0 to 1800.")
+		end
 	end
 
 	if conf.keys.keepalive1_mod == nil or conf.keys.keepalive1_mod == "" then
 		add_warning("config.warning.keepalive1Mod", "keepalive1_mod is recommended to improve compatibility.")
+	elseif not is_parser_bool(conf.keys.keepalive1_mod) then
+		add_invalid("keepalive1_mod")
+		add_warning("config.warning.keepalive1ModValue", "keepalive1_mod should be True, False, 1, or 0.")
 	end
 
 	if conf.non_empty_lines ~= 0 and count_keys(conf.keys) == 0 then
@@ -182,8 +216,9 @@ local function validate_config(conf)
 	end
 
 	return {
-		valid = #missing_keys == 0,
+		valid = #missing_keys == 0 and #invalid_keys == 0,
 		missing_keys = missing_keys,
+		invalid_keys = invalid_keys,
 		warnings = warnings,
 		parsed_keys = count_keys(conf.keys),
 		non_empty_lines = conf.non_empty_lines,
@@ -311,7 +346,7 @@ local function detect_challenge(log_text)
 	for index = #lines, 1, -1 do
 		local line = trim(lines[index])
 		if line ~= "" then
-			if line:match("Login success") then
+			if line:match("Login success") or line:match("Logged in") then
 				return { code = "authenticated", status = translate("Authenticated"), line = line }
 			elseif line:match("Initial boot grace period is active") or line:match("Delaying first login attempt") then
 				return { code = "waiting", status = translate("Waiting"), line = line }
@@ -435,7 +470,11 @@ local function extract_issues(log_text, config_state, running, network_state)
 		elseif line:match("Permission denied") then
 			append_issue(issues, seen, "critical", "issue.permissionProblem.title", "Permission problem detected", line, "issue.permissionProblem.hint", "Verify executable permissions for init script, binary, and opkg scripts.")
 		elseif line:match("Initial boot grace period is active") then
-			append_issue(issues, seen, "info", nil, "Startup login delay is active", line, nil, "The service delays the first login for 5 minutes after boot to avoid campus-side temporary login blocks.")
+			append_issue(issues, seen, "info", nil, "Startup login delay is active", line, nil, "The service delays the first login according to startup_delay_seconds to avoid campus-side temporary login blocks.")
+		elseif line:match("UDP response timeout") then
+			append_issue(issues, seen, "warning", nil, "UDP packet loss or congestion detected", line, nil, "The client resent the same authentication packet after a UDP timeout. If this appears during heavy traffic, check router CPU load, WAN errors, and campus-side packet loss.")
+		elseif line:match("Ignoring unexpected UDP response") then
+			append_issue(issues, seen, "warning", nil, "Unexpected UDP response skipped", line, nil, "The client ignored a stale or unrelated UDP packet while waiting for the current authentication response. If this appears during heavy traffic, check for packet reordering, queued old packets, and router load.")
 		elseif line:match("Server forced this account offline") then
 			append_issue(issues, seen, "warning", nil, "Server cooldown is active", line, nil, "The campus server temporarily blocks re-login after a forced logout. Wait for the reported cooldown before retrying.")
 		elseif line:match("short generic credential rejection") then
@@ -454,7 +493,7 @@ local function extract_issues(log_text, config_state, running, network_state)
 			append_issue(issues, seen, "critical", "issue.crashLoop.title", "Service is crashing repeatedly", line, "issue.crashLoop.hint", "Run drcom in foreground and inspect the latest error before re-enabling respawn.")
 		elseif line:match("Failed to keep in touch") then
 			append_issue(issues, seen, "warning", "issue.keepaliveFailed.title", "Keepalive failed", line, "issue.keepaliveFailed.hint", "Login may have succeeded but keepalive packets are not being acknowledged.")
-		elseif line:match("Login success") then
+		elseif line:match("Login success") or line:match("Logged in") then
 			append_issue(issues, seen, "info", "issue.loginSucceeded.title", "Login succeeded recently", line, "issue.loginSucceeded.hint", "If Internet still fails, continue checking route, DNS, and NAT status.")
 		end
 
@@ -483,8 +522,11 @@ local function extract_issues(log_text, config_state, running, network_state)
 		end
 	end
 
-	if not config_state.valid then
+	if config_state.missing_keys and #config_state.missing_keys > 0 then
 		append_issue(issues, seen, "warning", "issue.configIncomplete.title", "Configuration is incomplete", table.concat(config_state.missing_keys, ", "), "issue.configIncomplete.hint", "Fill in the missing required keys before restarting the service.")
+	end
+	if config_state.invalid_keys and #config_state.invalid_keys > 0 then
+		append_issue(issues, seen, "warning", nil, "Configuration has invalid values", table.concat(config_state.invalid_keys, ", "), nil, "Fix the listed keys before restarting the service.")
 	end
 
 	local idx
@@ -712,6 +754,7 @@ function render_form()
 		elseif action == "save_restart" then
 			body = (http.formvalue("conf") or ""):gsub("\r\n?", "\n")
 			fs.writefile(CONF_PATH, body)
+			fs.chmod(CONF_PATH, 384)
 			invalidate_snapshot_cache()
 			if shell_ok(INIT_PATH .. " restart") then
 				local info = localized_message("form.configSavedRestarting", "Configuration saved. Service restarting (check status and logs below).")

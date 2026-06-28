@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 
 #include "../auth.h"
 #include "../retry_policy.h"
@@ -8,6 +9,36 @@ static int expect_int(const char *name, int actual, int expected) {
         fprintf(stderr, "%s: expected %d, got %d\n", name, expected, actual);
         return 1;
     }
+    return 0;
+}
+
+static int expect_profile(const char *profile, unsigned char expected_auth0, int expected_jlu, int expected_ror) {
+    struct drcom_profile_defaults defaults;
+
+    if (drcom_profile_defaults_for_name(profile, &defaults) != 0) {
+        fprintf(stderr, "%s: expected supported profile\n", profile);
+        return 1;
+    }
+
+    if (defaults.AUTH_VERSION[0] != expected_auth0 || defaults.AUTH_VERSION[1] != 0x00) {
+        fprintf(stderr, "%s: expected auth version %02x00, got %02x%02x\n",
+                profile,
+                expected_auth0,
+                defaults.AUTH_VERSION[0],
+                defaults.AUTH_VERSION[1]);
+        return 1;
+    }
+
+    if (defaults.jlu_mode != expected_jlu || defaults.ror_version != expected_ror) {
+        fprintf(stderr, "%s: expected jlu=%d ror=%d, got jlu=%d ror=%d\n",
+                profile,
+                expected_jlu,
+                expected_ror,
+                defaults.jlu_mode,
+                defaults.ror_version);
+        return 1;
+    }
+
     return 0;
 }
 
@@ -45,6 +76,34 @@ int main(void) {
         return 1;
     }
     if (expect_int("six failures reconnect", drcom_should_reconnect_after_keepalive_failure(6), 1) != 0) {
+        return 1;
+    }
+
+    if (expect_int("forced JLU login uses JLU template first", drcom_login_template_for_attempt(1, 0), DRCOM_LOGIN_TEMPLATE_JLU) != 0) {
+        return 1;
+    }
+    if (expect_int("generic login starts with standard template", drcom_login_template_for_attempt(0, 0), DRCOM_LOGIN_TEMPLATE_STANDARD) != 0) {
+        return 1;
+    }
+    if (expect_int("generic login falls back to JLU template", drcom_login_template_for_attempt(0, 3), DRCOM_LOGIN_TEMPLATE_JLU) != 0) {
+        return 1;
+    }
+    if (expect_int("first keepalive sends extra packet", drcom_keepalive_extra_packet_kind(0), DRCOM_KEEPALIVE_EXTRA_FIRST) != 0) {
+        return 1;
+    }
+    if (expect_int("middle keepalive skips extra packet", drcom_keepalive_extra_packet_kind(9), DRCOM_KEEPALIVE_EXTRA_NONE) != 0) {
+        return 1;
+    }
+    if (expect_int("tenth keepalive sends periodic extra packet", drcom_keepalive_extra_packet_kind(10), DRCOM_KEEPALIVE_EXTRA_PERIODIC) != 0) {
+        return 1;
+    }
+    if (expect_profile("jlu-modern", 0x6a, 1, 1) != 0) {
+        return 1;
+    }
+    if (expect_profile("jlu-legacy", 0x68, 1, 1) != 0) {
+        return 1;
+    }
+    if (expect_profile("generic", 0x2c, 0, 0) != 0) {
         return 1;
     }
 

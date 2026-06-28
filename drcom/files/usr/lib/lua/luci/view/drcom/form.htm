@@ -542,7 +542,7 @@
 
 	<div class="jludrcom-editor">
 		<h3 data-i18n="config_editor"><%:Config Editor%></h3>
-		<p class="jludrcom-help">Use the official dogcom-style syntax. The sample below uses the safest compatibility form for this package: single quotes for strings, 0x MAC, and explicit AUTH / KEEP_ALIVE fields. / 请使用官方 dogcom 风格语法。下方样例采用本包兼容性最稳的写法：字符串单引号、0x 格式 MAC，以及明确填写 AUTH / KEEP_ALIVE 字段。</p>
+		<p class="jludrcom-help">Use the official dogcom-style syntax. The sample below selects the JLU profile, uses single quotes for strings, and keeps the MAC in 0x form. / 请使用官方 dogcom 风格语法。下方样例选择吉林大学 profile，字符串使用单引号，MAC 使用 0x 格式。</p>
 		<div class="jludrcom-config-example">
 			<div class="jludrcom-config-example-head">
 				<span class="jludrcom-callout-title">Reference Sample / 参考样例</span>
@@ -562,10 +562,9 @@ dhcp_server='0.0.0.0'
 CONTROLCHECKSTATUS='\x20'
 ADAPTERNUM='\x05'
 IPDOG='\x01'
-AUTH_VERSION='\x2c\x00'
-KEEP_ALIVE_VERSION='\xdc\x02'
-ror_version=False
-keepalive1_mod=True</pre>
+profile='jlu-modern'
+keepalive1_mod=True
+startup_delay_seconds=60</pre>
 		</div>
 		<form method="post" action="">
 			<input type="hidden" name="token" value="<%=token%>" />
@@ -707,8 +706,12 @@ keepalive1_mod=True</pre>
 			'config.warning.serverIpv4': 'server should be an IPv4 address.',
 			'config.warning.hostIpIpv4': 'host_ip should be an IPv4 address.',
 			'config.warning.macFormat': 'mac should use dogcom format like 0xB025AA851014.',
-			'config.warning.rorVersion': 'ror_version should be True or False.',
+			'config.warning.profile': 'profile should be jlu-modern, jlu-legacy, or generic.',
+			'config.warning.rorVersion': 'ror_version should be True, False, 1, or 0.',
+			'config.warning.jluMode': 'jlu_mode should be True, False, 1, or 0.',
+			'config.warning.startupDelay': 'startup_delay_seconds should be an integer from 0 to 1800.',
 			'config.warning.keepalive1Mod': 'keepalive1_mod is recommended to improve compatibility.',
+			'config.warning.keepalive1ModValue': 'keepalive1_mod should be True, False, 1, or 0.',
 			'config.warning.unsupportedFormat': 'Configuration uses an unsupported format; prefer dogcom-style key = \'value\' lines.',
 			'issue.programCrashed.title': 'Program crashed',
 			'issue.programCrashed.hint': 'Check config format carefully, especially mac and boolean fields.',
@@ -849,8 +852,12 @@ keepalive1_mod=True</pre>
 			'config.warning.serverIpv4': 'server 应为 IPv4 地址。',
 			'config.warning.hostIpIpv4': 'host_ip 应为 IPv4 地址。',
 			'config.warning.macFormat': 'mac 应使用 dogcom 格式，例如 0xB025AA851014。',
-			'config.warning.rorVersion': 'ror_version 应为 True 或 False。',
+			'config.warning.profile': 'profile 应为 jlu-modern、jlu-legacy 或 generic。',
+			'config.warning.rorVersion': 'ror_version 应为 True、False、1 或 0。',
+			'config.warning.jluMode': 'jlu_mode 应为 True、False、1 或 0。',
+			'config.warning.startupDelay': 'startup_delay_seconds 应为 0 到 1800 之间的整数。',
 			'config.warning.keepalive1Mod': '建议填写 keepalive1_mod 以提升兼容性。',
+			'config.warning.keepalive1ModValue': 'keepalive1_mod 应为 True、False、1 或 0。',
 			'config.warning.unsupportedFormat': '配置格式不受支持；建议使用 dogcom 风格的 key = \'value\' 行。',
 			'issue.programCrashed.title': '程序崩溃',
 			'issue.programCrashed.hint': '请仔细检查配置格式，尤其是 mac 与布尔字段。',
@@ -935,19 +942,28 @@ keepalive1_mod=True</pre>
 		'Inspect the listed PIDs and stop the conflicting process manually if needed.': '请检查列出的 PID，并在必要时手动停止冲突进程。',
 		'Automatic port recovery succeeded': '自动端口恢复成功',
 		'The service cleared stale listeners before binding port 61440.': '服务在绑定 61440 端口前已清理陈旧监听器。',
+		'Startup login delay is active': '启动登录等待中',
+		'The service delays the first login according to startup_delay_seconds to avoid campus-side temporary login blocks.': '服务会按 startup_delay_seconds 延迟首次登录，以避开认证端临时残留状态。',
+		'UDP packet loss or congestion detected': '检测到 UDP 丢包或拥塞',
+		'The client resent the same authentication packet after a UDP timeout. If this appears during heavy traffic, check router CPU load, WAN errors, and campus-side packet loss.': '客户端在 UDP 超时后重发了同一个认证包。如果它常在大流量时出现，请检查路由器 CPU、WAN 错包以及校园网侧丢包。',
+		'Unexpected UDP response skipped': '已跳过非当前 UDP 响应',
+		'The client ignored a stale or unrelated UDP packet while waiting for the current authentication response. If this appears during heavy traffic, check for packet reordering, queued old packets, and router load.': '客户端等待当前认证响应时跳过了陈旧或无关的 UDP 包。如果它常在大流量时出现，请检查乱序、旧包积压和路由器负载。',
 		'No route to authentication server': '到认证服务器没有路由',
 		'Check WAN link, upstream interface, and whether the configured server IP is reachable from the router.': '请检查 WAN 链路、上游接口，以及路由器是否可以到达配置的服务器 IP。',
 		'host_ip does not match the active route source': 'host_ip 与当前路由源地址不一致',
 		'Update host_ip to the source address chosen by the current route, or pin the route/interface first.': '请将 host_ip 改为当前路由选中的源地址，或先固定路由/接口。',
 		'Configuration is incomplete': '配置不完整',
 		'Fill in the missing required keys before restarting the service.': '请在重启服务前补齐必需键。',
+		'Configuration has invalid values': '配置存在非法值',
+		'Fix the listed keys before restarting the service.': '请在重启服务前修正列出的配置项。',
 		'Configuration warning': '配置警告',
 		'Review the config editor helper text for recommended formatting.': '请参考配置编辑器下方提示，检查推荐格式。',
 		'server should be an IPv4 address.': 'server 应为 IPv4 地址。',
 		'host_ip should be an IPv4 address.': 'host_ip 应为 IPv4 地址。',
 		'mac should use dogcom format like 0xB025AA851014.': 'mac 应使用 dogcom 格式，例如 0xB025AA851014。',
-		'ror_version should be True or False.': 'ror_version 应为 True 或 False。',
+		'ror_version should be True, False, 1, or 0.': 'ror_version 应为 True、False、1 或 0。',
 		'keepalive1_mod is recommended to improve compatibility.': '建议填写 keepalive1_mod 以提升兼容性。',
+		'keepalive1_mod should be True, False, 1, or 0.': 'keepalive1_mod 应为 True、False、1 或 0。',
 		'Configuration uses an unsupported format; prefer dogcom-style key = \'value\' lines.': '配置格式不受支持；建议使用 dogcom 风格的 key = \'value\' 行。',
 		'Unsupported service action.': '不支持的服务操作。',
 		'Service script is missing or not executable.': '服务脚本不存在或不可执行。',

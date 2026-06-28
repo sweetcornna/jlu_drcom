@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
 import concurrent.futures
 import gzip
@@ -115,7 +117,7 @@ def generate_matrix(release: str, workers: int) -> list[dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate a de-duplicated OpenWrt SDK build matrix by pkgarch.")
-    parser.add_argument("--release", required=True, help="OpenWrt release, for example 24.10.5")
+    parser.add_argument("--release", required=True, help="OpenWrt release, for example 24.10.7")
     parser.add_argument("--workers", type=int, default=16, help="Concurrent target fetch workers")
     args = parser.parse_args()
 

@@ -25,6 +25,63 @@ curl_retry() {
     "$@"
 }
 
+verify_sha256() {
+  local expected="$1"
+  local file="$2"
+  local actual
+
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s  %s\n' "$expected" "$file" | shasum -a 256 -c >/dev/null
+    return $?
+  fi
+
+  if command -v sha256sum >/dev/null 2>&1 && sha256sum --help 2>&1 | grep -q -- '--check'; then
+    printf '%s  %s\n' "$expected" "$file" | sha256sum --check --status
+    return $?
+  fi
+
+  if command -v openssl >/dev/null 2>&1; then
+    actual="$(openssl dgst -sha256 "$file" | awk '{print $NF}')"
+    [[ "$actual" == "$expected" ]]
+    return $?
+  fi
+
+  echo "No supported SHA-256 verifier found." >&2
+  return 1
+}
+
+ensure_linux_x86_64_host() {
+  local kernel="${1:-$(uname -s)}"
+  local machine="${2:-$(uname -m)}"
+
+  case "${kernel}:${machine}" in
+    Linux:x86_64|Linux:amd64)
+      return 0
+      ;;
+  esac
+
+  echo "OpenWrt release SDK archives are Linux x86_64 toolchains. Run this script on Linux x86_64, in CI, or inside a Linux x86_64 container." >&2
+  return 1
+}
+
+if [[ "${1:-}" == "--self-test-verify-sha256" ]]; then
+  if [[ $# -ne 3 ]]; then
+    echo "Usage: $0 --self-test-verify-sha256 <sha256> <file>" >&2
+    exit 1
+  fi
+  verify_sha256 "$2" "$3"
+  exit $?
+fi
+
+if [[ "${1:-}" == "--self-test-host-supported" ]]; then
+  if [[ $# -ne 3 ]]; then
+    echo "Usage: $0 --self-test-host-supported <kernel> <machine>" >&2
+    exit 1
+  fi
+  ensure_linux_x86_64_host "$2" "$3"
+  exit $?
+fi
+
 normalize_pkgarch() {
   local value
   value="$(printf '%s' "$1" | tr '+' '_')"
@@ -71,6 +128,8 @@ if [[ -z "$PACKAGE_ROOT" || -z "$OPENWRT_RELEASE" || -z "$TARGET" || -z "$SUBTAR
   exit 1
 fi
 
+ensure_linux_x86_64_host
+
 PACKAGE_ROOT="$(cd "$PACKAGE_ROOT" && pwd)"
 OUTPUT_DIR="$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)"
 WORK_ROOT="${WORK_ROOT:-$PACKAGE_ROOT/../.work}"
@@ -105,7 +164,7 @@ resolve_sdk_root() {
     curl_retry "$sdk_url" --output "$archive_path"
   fi
 
-  echo "${sdk_sha256}  ${archive_path}" | sha256sum --check --status
+  verify_sha256 "$sdk_sha256" "$archive_path"
 
   extract_dir="$WORK_ROOT/sdk-${TARGET}-${SUBTARGET}"
   rm -rf "$extract_dir"
@@ -257,45 +316,21 @@ sed -i 's/\r$//' \
   "$STAGE_DIR/usr/lib/lua/luci/controller/$OUTPUT_PKG_NAME.lua" \
   "$STAGE_DIR/usr/lib/lua/luci/view/$OUTPUT_PKG_NAME/form.htm"
 
-python3 - "$STAGE_DIR/etc/init.d/$OUTPUT_PKG_NAME" "$STAGE_DIR/usr/lib/lua/luci/controller/$OUTPUT_PKG_NAME.lua" "$OUTPUT_PKG_NAME" <<'PY'
-from pathlib import Path
-import sys
-
-init_path = Path(sys.argv[1])
-controller_path = Path(sys.argv[2])
-package_name = sys.argv[3]
-
-replacements = (
-    ("/etc/" + package_name + ".conf", "/etc/drcom.conf"),
-    ("/tmp/" + package_name + ".log", "/tmp/drcom.log"),
-    ("/tmp/" + package_name + "-port-state", "/tmp/drcom-port-state"),
-)
-
-for path in (init_path, controller_path):
-    text = path.read_text(encoding="utf-8").replace("drcom", package_name)
-    for old, new in replacements:
-        text = text.replace(old, new)
-    path.write_text(text, encoding="utf-8", newline="\n")
-PY
-
-python3 - "$STAGE_DIR/usr/lib/lua/luci/view/$OUTPUT_PKG_NAME/form.htm" "$OUTPUT_PKG_NAME" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-package_name = sys.argv[2]
-text = path.read_text(encoding="utf-8").replace("jludrcom.language", f"{package_name}.language")
-path.write_text(text, encoding="utf-8", newline="\n")
-PY
+python3 "$SCRIPT_DIR/patch-package-layout.py" \
+  --init "$STAGE_DIR/etc/init.d/$OUTPUT_PKG_NAME" \
+  --controller "$STAGE_DIR/usr/lib/lua/luci/controller/$OUTPUT_PKG_NAME.lua" \
+  --view "$STAGE_DIR/usr/lib/lua/luci/view/$OUTPUT_PKG_NAME/form.htm" \
+  --package-name "$OUTPUT_PKG_NAME"
 
 chmod 0755 "$STAGE_DIR/usr/bin/$OUTPUT_PKG_NAME" "$STAGE_DIR/etc/init.d/$OUTPUT_PKG_NAME"
+chmod 0600 "$STAGE_DIR/etc/drcom.conf"
 
 INSTALLED_SIZE="$(( $(du -sk "$STAGE_DIR" | awk '{print $1}') * 1024 ))"
 
 cat > "$CONTROL_DIR/control" <<EOF
 Package: $OUTPUT_PKG_NAME
 Version: $PKG_FULL_VERSION
-Depends: libc, luci-base
+Depends: libc, luci-base, luci-lua-runtime
 Source: feeds/base/$OUTPUT_PKG_NAME
 SourceName: $OUTPUT_PKG_NAME
 License: AGPL-3.0-or-later
@@ -313,17 +348,7 @@ EOF
 
 cat > "$CONTROL_DIR/postinst" <<'EOF'
 #!/bin/sh
-[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
-[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
-. ${IPKG_INSTROOT}/lib/functions.sh
-default_postinst $0 $@
-EOF
-
-cat > "$CONTROL_DIR/postinst-pkg" <<EOF
-#!/bin/sh
-[ -n "\$IPKG_INSTROOT" ] || {
-  /etc/init.d/$OUTPUT_PKG_NAME enable >/dev/null 2>&1 || true
-  /etc/init.d/$OUTPUT_PKG_NAME restart >/dev/null 2>&1 || true
+[ -n "$IPKG_INSTROOT" ] || {
   [ -x /etc/init.d/uhttpd ] && /etc/init.d/uhttpd reload >/dev/null 2>&1 || true
 }
 exit 0
@@ -331,24 +356,12 @@ EOF
 
 cat > "$CONTROL_DIR/prerm" <<'EOF'
 #!/bin/sh
-[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
-. ${IPKG_INSTROOT}/lib/functions.sh
-default_prerm $0 $@
-EOF
-
-cat > "$CONTROL_DIR/prerm-pkg" <<EOF
-#!/bin/sh
-[ -n "\$IPKG_INSTROOT" ] || {
-  /etc/init.d/$OUTPUT_PKG_NAME stop >/dev/null 2>&1 || true
-}
 exit 0
 EOF
 
 chmod 0755 \
   "$CONTROL_DIR/postinst" \
-  "$CONTROL_DIR/postinst-pkg" \
-  "$CONTROL_DIR/prerm" \
-  "$CONTROL_DIR/prerm-pkg"
+  "$CONTROL_DIR/prerm"
 
 OUTPUT_IPK="$OUTPUT_DIR/${OUTPUT_PKG_NAME}_${PKG_FULL_VERSION}_${SDK_PKGARCH}.ipk"
 rm -f "$OUTPUT_IPK" "${OUTPUT_IPK}.sha256"

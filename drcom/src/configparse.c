@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "debug.h"
+#include "retry_policy.h"
 
 int verbose_flag = 0;
 int logging_flag = 0;
@@ -13,6 +14,7 @@ char *log_path;
 char mode[10];
 char bind_ip[20];
 struct config drcom_config;
+static struct config config_explicit;
 
 static int read_d_config(char *buf);
 static int read_p_config(char *buf);
@@ -25,6 +27,9 @@ static int parse_hex_byte_string(const char *value, unsigned char *result);
 static int parse_two_byte_string(const char *value, unsigned char result[2]);
 static int parse_mac_string(const char *value, unsigned char result[6]);
 static int parse_bool_string(const char *value, int *result);
+static int parse_nonnegative_int_string(const char *value, int *result);
+static int copy_ipv4_checked(char *dest, size_t dest_size, const char *value, const char *field_name);
+static int apply_profile_defaults(void);
 
 static char *trim_in_place(char *value) {
     char *end;
@@ -117,6 +122,17 @@ static int copy_checked(char *dest, size_t dest_size, const char *value, const c
     return 0;
 }
 
+static int copy_ipv4_checked(char *dest, size_t dest_size, const char *value, const char *field_name) {
+    unsigned char parsed_ip[4];
+
+    if (drcom_parse_ipv4_address(value, parsed_ip) != 0) {
+        fprintf(stderr, "%s is not a valid IPv4 address.\n", field_name);
+        return 1;
+    }
+
+    return copy_checked(dest, dest_size, value, field_name);
+}
+
 static int equals_ignore_case(const char *left, const char *right) {
     if (left == NULL || right == NULL) {
         return 0;
@@ -138,6 +154,10 @@ static int collect_hex_digits(const char *value, char *digits, size_t digits_siz
 
     if (value == NULL || digits == NULL || digits_size <= expected_digits) {
         return 1;
+    }
+
+    if (value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) {
+        value += 2;
     }
 
     while (*value != '\0') {
@@ -237,6 +257,61 @@ static int parse_bool_string(const char *value, int *result) {
     return 1;
 }
 
+static int parse_nonnegative_int_string(const char *value, int *result) {
+    char *end = NULL;
+    long parsed;
+
+    if (value == NULL || result == NULL || *value == '\0') {
+        return 1;
+    }
+
+    parsed = strtol(value, &end, 10);
+    if (end == value || *trim_in_place(end) != '\0' || parsed < 0 || parsed > 1800) {
+        return 1;
+    }
+
+    *result = (int)parsed;
+    return 0;
+}
+
+static int apply_profile_defaults(void) {
+    struct drcom_profile_defaults defaults;
+
+    if (drcom_config.profile[0] == '\0') {
+        return 0;
+    }
+
+    if (drcom_profile_defaults_for_name(drcom_config.profile, &defaults) != 0) {
+        fprintf(stderr, "Unknown profile: %s\n", drcom_config.profile);
+        return 1;
+    }
+
+    if (!config_explicit.AUTH_VERSION[0]) {
+        memcpy(drcom_config.AUTH_VERSION, defaults.AUTH_VERSION, sizeof(drcom_config.AUTH_VERSION));
+    }
+    if (!config_explicit.KEEP_ALIVE_VERSION[0]) {
+        memcpy(drcom_config.KEEP_ALIVE_VERSION, defaults.KEEP_ALIVE_VERSION, sizeof(drcom_config.KEEP_ALIVE_VERSION));
+    }
+    if (!config_explicit.jlu_mode) {
+        drcom_config.jlu_mode = defaults.jlu_mode;
+    }
+    if (!config_explicit.ror_version) {
+        drcom_config.ror_version = defaults.ror_version;
+    }
+    if (!config_explicit.startup_delay_seconds) {
+        drcom_config.startup_delay_seconds = defaults.startup_delay_seconds;
+    }
+    DEBUG_PRINT(("[PARSER_DEBUG]profile=%s AUTH_VERSION=0x%02x%02x KEEP_ALIVE_VERSION=0x%02x%02x jlu_mode=%d ror_version=%d\n",
+                 drcom_config.profile,
+                 drcom_config.AUTH_VERSION[0],
+                 drcom_config.AUTH_VERSION[1],
+                 drcom_config.KEEP_ALIVE_VERSION[0],
+                 drcom_config.KEEP_ALIVE_VERSION[1],
+                 drcom_config.jlu_mode,
+                 drcom_config.ror_version));
+    return 0;
+}
+
 int config_parse(char *filepath) {
     FILE *ptr_file;
     char buf[256];
@@ -250,6 +325,7 @@ int config_parse(char *filepath) {
     }
 
     memset(&drcom_config, 0, sizeof(drcom_config));
+    memset(&config_explicit, 0, sizeof(config_explicit));
 
     while (fgets(buf, sizeof(buf), ptr_file)) {
         line_number++;
@@ -276,6 +352,9 @@ int config_parse(char *filepath) {
     }
 
     fclose(ptr_file);
+    if (apply_profile_defaults() != 0) {
+        return 1;
+    }
     return 0;
 }
 
@@ -314,8 +393,13 @@ static int read_d_config(char *buf) {
         return 1;
     }
 
-    if (strcmp(key, "server") == 0) {
-        if (copy_checked(drcom_config.server, sizeof(drcom_config.server), value, "server") != 0) {
+    if (strcmp(key, "profile") == 0) {
+        if (copy_checked(drcom_config.profile, sizeof(drcom_config.profile), value, "profile") != 0) {
+            return 1;
+        }
+        debug_log_string("profile", drcom_config.profile, 0);
+    } else if (strcmp(key, "server") == 0) {
+        if (copy_ipv4_checked(drcom_config.server, sizeof(drcom_config.server), value, "server") != 0) {
             return 1;
         }
         debug_log_string("server", drcom_config.server, 0);
@@ -342,7 +426,7 @@ static int read_d_config(char *buf) {
         drcom_config.ADAPTERNUM = parsed_byte;
         DEBUG_PRINT(("[PARSER_DEBUG]ADAPTERNUM=0x%02x\n", drcom_config.ADAPTERNUM));
     } else if (strcmp(key, "host_ip") == 0) {
-        if (copy_checked(drcom_config.host_ip, sizeof(drcom_config.host_ip), value, "host_ip") != 0) {
+        if (copy_ipv4_checked(drcom_config.host_ip, sizeof(drcom_config.host_ip), value, "host_ip") != 0) {
             return 1;
         }
         debug_log_string("host_ip", drcom_config.host_ip, 0);
@@ -358,14 +442,14 @@ static int read_d_config(char *buf) {
         }
         debug_log_string("host_name", drcom_config.host_name, 0);
     } else if (strcmp(key, "PRIMARY_DNS") == 0) {
-        if (copy_checked(drcom_config.PRIMARY_DNS, sizeof(drcom_config.PRIMARY_DNS), value, "PRIMARY_DNS") != 0) {
+        if (copy_ipv4_checked(drcom_config.PRIMARY_DNS, sizeof(drcom_config.PRIMARY_DNS), value, "PRIMARY_DNS") != 0) {
             return 1;
         }
         debug_log_string("PRIMARY_DNS", drcom_config.PRIMARY_DNS, 0);
     } else if (strcmp(key, "SECONDARY_DNS") == 0) {
         debug_log_string("SECONDARY_DNS", value, 0);
     } else if (strcmp(key, "dhcp_server") == 0) {
-        if (copy_checked(drcom_config.dhcp_server, sizeof(drcom_config.dhcp_server), value, "dhcp_server") != 0) {
+        if (copy_ipv4_checked(drcom_config.dhcp_server, sizeof(drcom_config.dhcp_server), value, "dhcp_server") != 0) {
             return 1;
         }
         debug_log_string("dhcp_server", drcom_config.dhcp_server, 0);
@@ -374,6 +458,7 @@ static int read_d_config(char *buf) {
             return 1;
         }
         memcpy(drcom_config.AUTH_VERSION, parsed_two_bytes, sizeof(drcom_config.AUTH_VERSION));
+        config_explicit.AUTH_VERSION[0] = 1;
         DEBUG_PRINT(("[PARSER_DEBUG]AUTH_VERSION=0x%02x%02x\n", drcom_config.AUTH_VERSION[0], drcom_config.AUTH_VERSION[1]));
     } else if (strcmp(key, "mac") == 0) {
         if (parse_mac_string(value, parsed_mac) != 0) {
@@ -397,12 +482,14 @@ static int read_d_config(char *buf) {
             return 1;
         }
         memcpy(drcom_config.KEEP_ALIVE_VERSION, parsed_two_bytes, sizeof(drcom_config.KEEP_ALIVE_VERSION));
+        config_explicit.KEEP_ALIVE_VERSION[0] = 1;
         DEBUG_PRINT(("[PARSER_DEBUG]KEEP_ALIVE_VERSION=0x%02x%02x\n", drcom_config.KEEP_ALIVE_VERSION[0], drcom_config.KEEP_ALIVE_VERSION[1]));
     } else if (strcmp(key, "ror_version") == 0) {
         if (parse_bool_string(value, &parsed_bool) != 0) {
             return 1;
         }
         drcom_config.ror_version = parsed_bool;
+        config_explicit.ror_version = 1;
         DEBUG_PRINT(("[PARSER_DEBUG]ror_version=%d\n", drcom_config.ror_version));
     } else if (strcmp(key, "keepalive1_mod") == 0) {
         if (parse_bool_string(value, &parsed_bool) != 0) {
@@ -410,8 +497,21 @@ static int read_d_config(char *buf) {
         }
         drcom_config.keepalive1_mod = parsed_bool;
         DEBUG_PRINT(("[PARSER_DEBUG]keepalive1_mod=%d\n", drcom_config.keepalive1_mod));
+    } else if (strcmp(key, "jlu_mode") == 0) {
+        if (parse_bool_string(value, &parsed_bool) != 0) {
+            return 1;
+        }
+        drcom_config.jlu_mode = parsed_bool;
+        config_explicit.jlu_mode = 1;
+        DEBUG_PRINT(("[PARSER_DEBUG]jlu_mode=%d\n", drcom_config.jlu_mode));
+    } else if (strcmp(key, "startup_delay_seconds") == 0) {
+        if (parse_nonnegative_int_string(value, &drcom_config.startup_delay_seconds) != 0) {
+            return 1;
+        }
+        config_explicit.startup_delay_seconds = 1;
+        DEBUG_PRINT(("[PARSER_DEBUG]startup_delay_seconds=%d\n", drcom_config.startup_delay_seconds));
     } else if (strcmp(key, "bind_ip") == 0) {
-        if (copy_checked(bind_ip, sizeof(bind_ip), value, "bind_ip") != 0) {
+        if (copy_ipv4_checked(bind_ip, sizeof(bind_ip), value, "bind_ip") != 0) {
             return 1;
         }
         debug_log_string("bind_ip", bind_ip, 0);

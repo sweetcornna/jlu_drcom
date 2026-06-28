@@ -1,6 +1,7 @@
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <string.h>
 #include "auth.h"
 #include "configparse.h"
@@ -24,6 +25,7 @@ static int copy_option_value(char *dest, size_t dest_size, const char *source, c
 static char *duplicate_path_value(const char *path, const char *option_name);
 static int replace_dynamic_string(char **target, char *replacement);
 static void cleanup_paths(char **file_path_ref);
+static void handle_shutdown_signal(int signum);
 
 static int copy_option_value(char *dest, size_t dest_size, const char *source, const char *option_name) {
     int written;
@@ -88,6 +90,11 @@ static void cleanup_paths(char **file_path_ref) {
 
     free(log_path);
     log_path = NULL;
+}
+
+static void handle_shutdown_signal(int signum) {
+    (void)signum;
+    drcom_request_stop();
 }
 
 int main(int argc, char *argv[]) {
@@ -197,6 +204,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    signal(SIGINT, handle_shutdown_signal);
+#ifdef SIGTERM
+    signal(SIGTERM, handle_shutdown_signal);
+#endif
+
 #ifdef linux
     if (eapol_flag) {
         if (0 != try_smart_eaplogin()) {
@@ -214,9 +226,9 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    dogcom(5);
+    int result = dogcom(5);
     cleanup_paths(&file_path);
-    return 0;
+    return result;
 }
 
 void print_help(int exval) {

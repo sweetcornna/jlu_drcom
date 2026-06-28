@@ -11,6 +11,12 @@ static int test_valid_dhcp_config(void);
 static int test_rejects_overlong_value(void);
 static int test_rejects_invalid_auth_version(void);
 static int test_accepts_legacy_quoted_config(void);
+static int test_accepts_0x_prefixed_hex_values(void);
+static int test_rejects_invalid_ipv4_value(void);
+static int test_accepts_ipv4_boundary_octets(void);
+static int test_profile_applies_defaults(void);
+static int test_profile_preserves_manual_overrides(void);
+static int test_generic_profile_disables_startup_delay_by_default(void);
 
 static int write_file(const char *path, const char *content) {
     FILE *file = fopen(path, "w");
@@ -75,6 +81,8 @@ static int test_valid_dhcp_config(void) {
         "IPDOG = '\\x01'\n"
         "AUTH_VERSION = '\\x2c\\x00'\n"
         "KEEP_ALIVE_VERSION = '\\xdc\\x02'\n"
+        "jlu_mode = True\n"
+        "startup_delay_seconds = 45\n"
         "mac = B0:25:AA:85:10:14\n"
         "ror_version = False\n";
 
@@ -94,6 +102,8 @@ static int test_valid_dhcp_config(void) {
         expect_string("username parsed", drcom_config.username, "student") != 0 ||
         expect_string("host_os keeps spaces", drcom_config.host_os, "Windows 10") != 0 ||
         expect_true("keepalive1_mod persists", drcom_config.keepalive1_mod == 1) != 0 ||
+        expect_true("jlu_mode persists", drcom_config.jlu_mode == 1) != 0 ||
+        expect_true("startup delay parsed", drcom_config.startup_delay_seconds == 45) != 0 ||
         expect_true("ror_version false", drcom_config.ror_version == 0) != 0 ||
         expect_true("mac parsed", drcom_config.mac[0] == 0xB0 && drcom_config.mac[5] == 0x14) != 0) {
         remove(path);
@@ -200,6 +210,190 @@ static int test_accepts_legacy_quoted_config(void) {
     return 0;
 }
 
+static int test_accepts_0x_prefixed_hex_values(void) {
+    const char *path = "tests/parser_0x_hex.conf";
+    const char *content =
+        "profile='jlu-modern'\n"
+        "server='10.100.61.3'\n"
+        "username='student'\n"
+        "password='secret'\n"
+        "mac=0xB025AA851014\n"
+        "AUTH_VERSION=0x6a00\n"
+        "KEEP_ALIVE_VERSION=0xdc02\n";
+
+    set_mode_value("dhcp");
+
+    if (write_file(path, content) != 0) {
+        return 1;
+    }
+
+    if (expect_true("0x-prefixed config parses", config_parse((char *)path) == 0) != 0) {
+        remove(path);
+        return 1;
+    }
+
+    if (expect_true("0x mac parsed", drcom_config.mac[0] == 0xB0 && drcom_config.mac[5] == 0x14) != 0 ||
+        expect_true("0x auth parsed", drcom_config.AUTH_VERSION[0] == 0x6a && drcom_config.AUTH_VERSION[1] == 0x00) != 0 ||
+        expect_true("0x keepalive parsed", drcom_config.KEEP_ALIVE_VERSION[0] == 0xdc && drcom_config.KEEP_ALIVE_VERSION[1] == 0x02) != 0) {
+        remove(path);
+        return 1;
+    }
+
+    remove(path);
+    return 0;
+}
+
+static int test_rejects_invalid_ipv4_value(void) {
+    const char *path = "tests/parser_invalid_ipv4.conf";
+    const char *content =
+        "server='10.100.61.3'\n"
+        "username='student'\n"
+        "password='secret'\n"
+        "host_ip='999.1.1.1'\n";
+
+    set_mode_value("dhcp");
+
+    if (write_file(path, content) != 0) {
+        return 1;
+    }
+
+    if (expect_true("invalid IPv4 rejected", config_parse((char *)path) != 0) != 0) {
+        remove(path);
+        return 1;
+    }
+
+    remove(path);
+    return 0;
+}
+
+static int test_accepts_ipv4_boundary_octets(void) {
+    const char *path = "tests/parser_ipv4_boundary.conf";
+    const char *content =
+        "server='255.255.255.255'\n"
+        "username='student'\n"
+        "password='secret'\n"
+        "host_ip='255.0.128.1'\n"
+        "PRIMARY_DNS='223.5.5.5'\n"
+        "dhcp_server='0.0.0.0'\n"
+        "bind_ip='0.0.0.0'\n";
+
+    set_mode_value("dhcp");
+
+    if (write_file(path, content) != 0) {
+        return 1;
+    }
+
+    if (expect_true("IPv4 boundary octets parse", config_parse((char *)path) == 0) != 0 ||
+        expect_string("boundary host ip kept", drcom_config.host_ip, "255.0.128.1") != 0 ||
+        expect_string("boundary server kept", drcom_config.server, "255.255.255.255") != 0) {
+        remove(path);
+        return 1;
+    }
+
+    remove(path);
+    return 0;
+}
+
+static int test_profile_applies_defaults(void) {
+    const char *path = "tests/parser_profile.conf";
+    const char *content =
+        "profile='jlu-modern'\n"
+        "server='10.100.61.3'\n"
+        "username='student'\n"
+        "password='secret'\n";
+
+    set_mode_value("dhcp");
+
+    if (write_file(path, content) != 0) {
+        return 1;
+    }
+
+    if (expect_true("profile config parses", config_parse((char *)path) == 0) != 0) {
+        remove(path);
+        return 1;
+    }
+
+    if (expect_string("profile parsed", drcom_config.profile, "jlu-modern") != 0 ||
+        expect_true("profile auth version applied", drcom_config.AUTH_VERSION[0] == 0x6a && drcom_config.AUTH_VERSION[1] == 0x00) != 0 ||
+        expect_true("profile keep alive applied", drcom_config.KEEP_ALIVE_VERSION[0] == 0xdc && drcom_config.KEEP_ALIVE_VERSION[1] == 0x02) != 0 ||
+        expect_true("profile enables jlu mode", drcom_config.jlu_mode == 1) != 0 ||
+        expect_true("profile enables ror", drcom_config.ror_version == 1) != 0 ||
+        expect_true("startup delay defaults", drcom_config.startup_delay_seconds == DRCOM_DEFAULT_STARTUP_DELAY_SECONDS) != 0) {
+        remove(path);
+        return 1;
+    }
+
+    remove(path);
+    return 0;
+}
+
+static int test_profile_preserves_manual_overrides(void) {
+    const char *path = "tests/parser_profile_override.conf";
+    const char *content =
+        "profile='jlu-modern'\n"
+        "server='10.100.61.3'\n"
+        "username='student'\n"
+        "password='secret'\n"
+        "AUTH_VERSION='\\x68\\x00'\n"
+        "KEEP_ALIVE_VERSION='\\xdb\\x02'\n"
+        "ror_version=False\n"
+        "jlu_mode=False\n"
+        "startup_delay_seconds=0\n";
+
+    set_mode_value("dhcp");
+
+    if (write_file(path, content) != 0) {
+        return 1;
+    }
+
+    if (expect_true("profile override config parses", config_parse((char *)path) == 0) != 0) {
+        remove(path);
+        return 1;
+    }
+
+    if (expect_true("manual auth version preserved", drcom_config.AUTH_VERSION[0] == 0x68 && drcom_config.AUTH_VERSION[1] == 0x00) != 0 ||
+        expect_true("manual keepalive version preserved", drcom_config.KEEP_ALIVE_VERSION[0] == 0xdb && drcom_config.KEEP_ALIVE_VERSION[1] == 0x02) != 0 ||
+        expect_true("manual jlu mode preserved", drcom_config.jlu_mode == 0) != 0 ||
+        expect_true("manual ror preserved", drcom_config.ror_version == 0) != 0 ||
+        expect_true("manual startup delay preserved", drcom_config.startup_delay_seconds == 0) != 0) {
+        remove(path);
+        return 1;
+    }
+
+    remove(path);
+    return 0;
+}
+
+static int test_generic_profile_disables_startup_delay_by_default(void) {
+    const char *path = "tests/parser_generic_profile.conf";
+    const char *content =
+        "profile='generic'\n"
+        "server='10.100.61.3'\n"
+        "username='student'\n"
+        "password='secret'\n";
+
+    set_mode_value("dhcp");
+
+    if (write_file(path, content) != 0) {
+        return 1;
+    }
+
+    if (expect_true("generic profile config parses", config_parse((char *)path) == 0) != 0) {
+        remove(path);
+        return 1;
+    }
+
+    if (expect_true("generic startup delay defaults off", drcom_config.startup_delay_seconds == 0) != 0 ||
+        expect_true("generic disables jlu mode", drcom_config.jlu_mode == 0) != 0 ||
+        expect_true("generic disables ror", drcom_config.ror_version == 0) != 0) {
+        remove(path);
+        return 1;
+    }
+
+    remove(path);
+    return 0;
+}
+
 int main(void) {
     if (test_valid_dhcp_config() != 0) {
         return 1;
@@ -211,6 +405,24 @@ int main(void) {
         return 1;
     }
     if (test_accepts_legacy_quoted_config() != 0) {
+        return 1;
+    }
+    if (test_accepts_0x_prefixed_hex_values() != 0) {
+        return 1;
+    }
+    if (test_rejects_invalid_ipv4_value() != 0) {
+        return 1;
+    }
+    if (test_accepts_ipv4_boundary_octets() != 0) {
+        return 1;
+    }
+    if (test_profile_applies_defaults() != 0) {
+        return 1;
+    }
+    if (test_profile_preserves_manual_overrides() != 0) {
+        return 1;
+    }
+    if (test_generic_profile_disables_startup_delay_by_default() != 0) {
         return 1;
     }
 
