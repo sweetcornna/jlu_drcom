@@ -35,6 +35,56 @@
 
 在 GitHub Release 中下载对应架构的 `ipk`，上传到 OpenWrt / iStoreOS：
 
+文件名里的最后一段就是要选择的架构后缀，例如：
+
+`drcom_openwrt_<version>-<release>_aarch64_generic.ipk`
+
+其中 `aarch64_generic` 就是这台机器要用的版本。最可靠的确认方式是在路由器 SSH 里执行：
+
+```sh
+opkg print-architecture | awk '$1=="arch" && $2!="all" && $2!="noarch" {print $2}' | tail -n 1
+ubus call system board | jsonfilter -e '@.release.target'
+```
+
+第一行输出的是应该下载的 `pkgarch` 后缀；第二行输出的是 OpenWrt 的 `target/subtarget`，可以和下面表格互相核对。常见机器快速对照：
+
+| 机器 / 平台 | 常见 OpenWrt target | 下载文件后缀 |
+| --- | --- | --- |
+| NanoPi R2S / R4S / R4SE / R5S / R5C / R6S，Orange Pi R1 Plus / R1 Plus LTS 等 Rockchip 64 位板 | `rockchip/armv8` | `aarch64_generic` |
+| x86_64 软路由、小主机、虚拟机、Intel N100 / J4125 / 赛扬 / 酷睿 / AMD64 | `x86/64` | `x86_64` |
+| 旧 32 位 x86 机器 | `x86/generic` | `i386_pentium4` |
+| AMD Geode / very old x86 thin client | `x86/geode` | `i386_pentium-mmx` |
+| Raspberry Pi 1 / Zero | `bcm27xx/bcm2708` | `arm_arm1176jzf-s_vfp` |
+| Raspberry Pi 2 | `bcm27xx/bcm2709` | `arm_cortex-a7_neon-vfpv4` |
+| Raspberry Pi 3 / Zero 2 W / CM3 | `bcm27xx/bcm2710` | `aarch64_cortex-a53` |
+| Raspberry Pi 4 / 400 / CM4 | `bcm27xx/bcm2711` | `aarch64_cortex-a72` |
+| Raspberry Pi 5 / CM5 | `bcm27xx/bcm2712` | `aarch64_cortex-a76` |
+| MT7621 路由器，例如 K2P、新路由 3 / Newifi D2、小米路由器 3G、Redmi AC2100 等 | `ramips/mt7621` | `mipsel_24kc` |
+| MT7620 / MT7628 / MT7688 路由器 | `ramips/mt7620` / `ramips/mt76x8` | `mipsel_24kc` |
+| MT7622 / MT7981 / MT7986 / Filogic 设备 | `mediatek/mt7622` / `mediatek/filogic` | `aarch64_cortex-a53` |
+| MT7623 设备 | `mediatek/mt7623` | `arm_cortex-a7_neon-vfpv4` |
+| MT7629 设备 | `mediatek/mt7629` | `arm_cortex-a7` |
+| AR71xx / AR9xxx / QCA95xx 迁移到 ath79 的老路由，例如 Archer C7 / WDR 系列 | `ath79/generic` / `ath79/nand` / `ath79/tiny` | `mips_24kc` |
+| Qualcomm IPQ40xx，例如 IPQ4018 / IPQ4019 路由 | `ipq40xx/generic` | `arm_cortex-a7_neon-vfpv4` |
+| Qualcomm IPQ806x，例如 Netgear R7800 / R7500v2、Linksys EA8500 | `ipq806x/generic` | `arm_cortex-a15_neon-vfpv4` |
+| Qualcomm IPQ807x / qualcommax Wi-Fi 6 路由 | `qualcommax/ipq807x` | `aarch64_cortex-a53` |
+| Broadcom ARM 路由，例如 Asus RT-AC68U、Netgear R7000 等 bcm53xx 设备 | `bcm53xx/generic` | `arm_cortex-a9` |
+| Broadcom bcm47xx 老 MIPS 路由 | `bcm47xx/generic` | `mipsel_mips32` |
+| Broadcom bcm47xx mips74k 老路由 | `bcm47xx/mips74k` | `mipsel_74kc` |
+| Linksys WRT1900 / WRT3200 等 Marvell mvebu Cortex-A9 设备 | `mvebu/cortexa9` | `arm_cortex-a9_vfpv3-d16` |
+| Marvell mvebu Cortex-A53 设备 | `mvebu/cortexa53` | `aarch64_cortex-a53` |
+| Marvell mvebu Cortex-A72 设备 | `mvebu/cortexa72` | `aarch64_cortex-a72` |
+| Realtek RTL838x 交换机 | `realtek/rtl838x` | `mips_4kec` |
+| Realtek RTL839x / RTL930x / RTL931x 交换机 | `realtek/rtl839x` / `realtek/rtl930x` / `realtek/rtl931x` | `mips_24kc` |
+| Kirkwood NAS / 老 ARM NAS | `kirkwood/generic` | `arm_xscale` |
+| Octeon 设备，例如 EdgeRouter Lite 一类平台 | `octeon/generic` | `mips64_octeonplus` |
+| OpenWrt armsr 64 位通用 ARM 系统 | `armsr/armv8` | `aarch64_generic` |
+| OpenWrt armsr 32 位通用 ARM 系统 | `armsr/armv7` | `arm_cortex-a15_neon-vfpv4` |
+| LoongArch64 设备 | `loongarch64/generic` | `loongarch64_generic` |
+| RISC-V D1 设备 | `d1/generic` | `riscv64_riscv64` |
+
+如果你的机器不在表里，以 `opkg print-architecture` 输出为准：下载文件名末尾同名的 `.ipk` 即可。
+
 ```sh
 opkg install /tmp/drcom_openwrt_*.ipk --force-reinstall
 chmod 600 /etc/drcom.conf
@@ -240,11 +290,54 @@ logread | grep -E 'drcom|dogcom|EAP'
 
 ## 支持架构
 
-本地已经验证：
+本地已经重点验证：
 
-- `aarch64_generic`（R2S / `rockchip/armv8`）
+- `aarch64_generic`（NanoPi R2S / `rockchip/armv8`）
 
-GitHub Actions 会从 OpenWrt 官方 `24.10.7` release 自动发现并去重所有可用 `pkgarch`，因此最终 Release 会直接包含该版本官方 SDK 能构建出的多架构 `ipk`。
+GitHub Actions 会从 OpenWrt 官方 `24.10.7` release 自动发现并去重所有可用 `pkgarch`，因此最终 Release 会直接包含该版本官方 SDK 能构建出的多架构 `ipk`。Release 文件名遵循：
+
+`drcom_openwrt_<version>-<release>_<pkgarch>.ipk`
+
+完整后缀对照如下：
+
+| 下载文件后缀 / `pkgarch` | 对应示例 target/subtarget | 常见平台说明 |
+| --- | --- | --- |
+| `aarch64_cortex-a53` | `bcm27xx/bcm2710`、`mediatek/filogic`、`mediatek/mt7622`、`qualcommax/ipq807x`、`mvebu/cortexa53`、`sunxi/cortexa53` | Cortex-A53 64 位 ARM 平台，树莓派 3、Filogic、部分 IPQ807x / mvebu / sunxi |
+| `aarch64_cortex-a72` | `bcm27xx/bcm2711`、`mvebu/cortexa72` | Cortex-A72 64 位 ARM 平台，树莓派 4 / CM4 等 |
+| `aarch64_cortex-a76` | `bcm27xx/bcm2712` | Cortex-A76 64 位 ARM 平台，树莓派 5 / CM5 等 |
+| `aarch64_generic` | `rockchip/armv8`、`armsr/armv8`、`layerscape/armv8_64b` | 通用 ARMv8 64 位平台，R2S / R4S / R5S / R6S 等 Rockchip 设备 |
+| `arm_arm1176jzf-s_vfp` | `bcm27xx/bcm2708` | ARM1176 平台，树莓派 1 / Zero |
+| `arm_arm926ej-s` | `at91/sam9x`、`mxs/generic` | ARM926EJ-S 老平台 |
+| `arm_cortex-a15_neon-vfpv4` | `armsr/armv7`、`ipq806x/generic` | Cortex-A15 / Krait 级 32 位 ARM，IPQ806x 等 |
+| `arm_cortex-a5_vfpv4` | `at91/sama5` | Cortex-A5 平台 |
+| `arm_cortex-a7` | `mediatek/mt7629` | MT7629 等 Cortex-A7 平台 |
+| `arm_cortex-a7_neon-vfpv4` | `bcm27xx/bcm2709`、`ipq40xx/generic`、`mediatek/mt7623`、`sunxi/cortexa7`、`layerscape/armv7` | Cortex-A7 32 位 ARM，树莓派 2、IPQ40xx、MT7623 等 |
+| `arm_cortex-a7_vfpv4` | `at91/sama7` | SAMA7 等 Cortex-A7 平台 |
+| `arm_cortex-a8_vfpv3` | `omap/generic`、`sunxi/cortexa8` | Cortex-A8 平台 |
+| `arm_cortex-a9` | `bcm53xx/generic` | Broadcom bcm53xx ARM 路由 |
+| `arm_cortex-a9_neon` | `imx/cortexa9` | i.MX Cortex-A9 平台 |
+| `arm_cortex-a9_vfpv3-d16` | `mvebu/cortexa9` | Marvell mvebu Cortex-A9，Linksys WRT 系列等 |
+| `arm_fa526` | `gemini/generic` | Gemini / FA526 老 ARM 平台 |
+| `arm_xscale` | `kirkwood/generic` | Kirkwood NAS / 老 ARM NAS |
+| `armeb_xscale` | `ixp4xx/generic` | 大端 XScale 老平台 |
+| `i386_pentium-mmx` | `x86/geode` | AMD Geode / very old x86 |
+| `i386_pentium4` | `x86/generic` | 32 位 x86 |
+| `loongarch64_generic` | `loongarch64/generic` | LoongArch64 平台 |
+| `mips64_mips64r2` | `malta/be64` | 64 位大端 MIPS Malta |
+| `mips64_octeonplus` | `octeon/generic` | Cavium Octeon 平台 |
+| `mips64el_mips64r2` | `malta/le64` | 64 位小端 MIPS Malta |
+| `mips_24kc` | `ath79/generic`、`ath79/nand`、`ath79/tiny`、`realtek/rtl839x`、`realtek/rtl930x`、`realtek/rtl931x` | 大端 MIPS 24Kc，ath79 路由和部分 Realtek 交换机 |
+| `mips_4kec` | `realtek/rtl838x` | RTL838x 交换机 |
+| `mips_mips32` | `bmips/bcm6318` | 大端 MIPS32 老平台 |
+| `mipsel_24kc` | `ramips/mt7620`、`ramips/mt7621`、`ramips/mt76x8`、`ramips/rt288x`、`ramips/rt305x` | 小端 MIPS 24Kc，MT7620 / MT7621 / MT7628 / MT7688 常见路由 |
+| `mipsel_24kc_24kf` | `pistachio/generic` | 小端 MIPS 24Kc/24Kf 平台 |
+| `mipsel_74kc` | `bcm47xx/mips74k`、`ramips/rt3883` | 小端 MIPS 74Kc 平台 |
+| `mipsel_mips32` | `bcm47xx/generic` | bcm47xx 老 MIPS 路由 |
+| `powerpc64_e5500` | `qoriq/generic` | PowerPC64 e5500 平台 |
+| `powerpc_464fp` | `apm821xx/nand` | APM821xx / PowerPC 464FP |
+| `powerpc_8548` | `mpc85xx/p1010`、`mpc85xx/p1020`、`mpc85xx/p2020` | MPC85xx / PowerPC 8548 |
+| `riscv64_riscv64` | `d1/generic` | RISC-V 64 位平台 |
+| `x86_64` | `x86/64` | 64 位 x86 软路由、小主机、虚拟机 |
 
 如果后续要切换到另一个 `opkg/ipk` 版本，只需要改 `.github/workflows/build-ipk.yml` 里的 `OPENWRT_RELEASE`。如果要支持 OpenWrt `25.12+`，需要新增 `apk` 打包路径，而不是只改版本号。
 

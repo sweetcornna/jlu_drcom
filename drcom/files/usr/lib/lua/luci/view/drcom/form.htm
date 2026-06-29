@@ -2,18 +2,24 @@
 <script type="text/javascript" src="<%=resource%>/xhr.js"></script>
 <style type="text/css">
 	.jludrcom-page {
-		--jl-bg: #0f172a;
-		--jl-panel: #111827;
-		--jl-panel-soft: #1f2937;
-		--jl-border: #334155;
-		--jl-text: #e5eefb;
-		--jl-muted: #94a3b8;
-		--jl-ok: #22c55e;
-		--jl-warn: #f59e0b;
-		--jl-danger: #ef4444;
-		--jl-info: #38bdf8;
-		--jl-shadow: 0 12px 36px rgba(15, 23, 42, 0.28);
+		--jl-bg: #f4f6fb;
+		--jl-panel: #ffffff;
+		--jl-panel-soft: #f8fafc;
+		--jl-border: #d7dde8;
+		--jl-border-strong: #aab6ca;
+		--jl-text: #111827;
+		--jl-muted: #64748b;
+		--jl-ok: #15803d;
+		--jl-warn: #b45309;
+		--jl-danger: #b91c1c;
+		--jl-info: #0369a1;
+		--jl-accent: #2563eb;
+		--jl-terminal: #0b1020;
+		--jl-shadow: 0 10px 30px rgba(15, 23, 42, 0.10);
+		background: var(--jl-bg);
 		color: var(--jl-text);
+		padding: 18px;
+		border-radius: 8px;
 	}
 
 	.jludrcom-page h2,
@@ -24,39 +30,68 @@
 		padding: 0 !important;
 	}
 
-	.jludrcom-hero,
+	.jludrcom-console-head,
 	.jludrcom-card,
 	.jludrcom-editor,
-	.jludrcom-panel {
-		background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(15, 23, 42, 0.96));
+	.jludrcom-panel,
+	.jludrcom-callout,
+	.jludrcom-config-example {
+		background: var(--jl-panel);
 		border: 1px solid var(--jl-border);
-		border-radius: 16px;
+		border-radius: 8px;
 		box-shadow: var(--jl-shadow);
 	}
 
-	.jludrcom-hero {
-		padding: 24px;
-		margin-bottom: 18px;
-	}
-
-	.jludrcom-hero-head {
+	.jludrcom-console-head {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		justify-content: space-between;
 		gap: 16px;
-		margin-bottom: 10px;
+		padding: 18px 20px;
+		margin-bottom: 14px;
+		border-left: 4px solid var(--jl-accent);
 	}
 
-	.jludrcom-hero-copy {
+	.jludrcom-console-title {
 		flex: 1 1 auto;
 		min-width: 0;
+	}
+
+	.jludrcom-eyebrow {
+		display: block;
+		margin-bottom: 4px;
+		color: var(--jl-accent);
+		font-size: 12px;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.jludrcom-console-head h2 {
+		margin: 0 0 4px;
+		color: var(--jl-text);
+		font-size: 24px;
+		line-height: 1.2;
+		font-weight: 800;
+	}
+
+	.jludrcom-console-head p,
+	.jludrcom-help,
+	.jludrcom-meta,
+	.jludrcom-empty,
+	.jludrcom-callout-body,
+	.jludrcom-config-example-note,
+	.jludrcom-editor-meta {
+		margin: 0;
+		color: var(--jl-muted);
+		line-height: 1.6;
 	}
 
 	.jludrcom-locale {
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
-		min-width: 168px;
+		min-width: 176px;
 	}
 
 	.jludrcom-locale-label {
@@ -64,103 +99,114 @@
 	}
 
 	.jludrcom-select {
-		min-height: 44px;
-		padding: 0 12px;
-		border-radius: 12px;
+		min-height: 38px;
+		padding: 0 10px;
+		border-radius: 8px;
 		border: 1px solid var(--jl-border);
-		background: rgba(2, 6, 23, 0.92);
-		color: #f8fafc;
+		background: #ffffff;
+		color: var(--jl-text);
 		cursor: pointer;
-		transition: border-color 180ms ease, background 180ms ease;
-	}
-
-	.jludrcom-select:hover,
-	.jludrcom-select:focus {
-		border-color: rgba(56, 189, 248, 0.6);
-		background: rgba(2, 6, 23, 1);
-	}
-
-	.jludrcom-hero h2 {
-		margin: 0 0 8px;
-		font-size: 28px;
-		line-height: 1.2;
-		color: #f8fafc;
-	}
-
-	.jludrcom-hero p,
-	.jludrcom-help,
-	.jludrcom-meta,
-	.jludrcom-empty {
-		margin: 0;
-		color: #cbd5e1;
-		line-height: 1.6;
+		transition: border-color 140ms ease, box-shadow 140ms ease;
 	}
 
 	.jludrcom-help code,
 	.jludrcom-callout code {
 		display: inline-block;
-		padding: 2px 8px;
-		border-radius: 999px;
-		border: 1px solid rgba(148, 163, 184, 0.32);
-		background: rgba(2, 6, 23, 0.9);
-		color: #e2e8f0;
+		padding: 1px 6px;
+		border-radius: 6px;
+		border: 1px solid var(--jl-border);
+		background: var(--jl-panel-soft);
+		color: var(--jl-text);
 		font: 600 12px/1.5 "Fira Code", Consolas, Monaco, monospace;
 	}
 
 	.jludrcom-feedback,
 	.jludrcom-message {
-		margin: 16px 0 0;
-		padding: 12px 14px;
-		border-radius: 12px;
+		margin: 0 0 14px;
+		padding: 10px 12px;
+		border-radius: 8px;
 		border: 1px solid var(--jl-border);
-		background: rgba(15, 23, 42, 0.68);
+		background: #ffffff;
+		font-weight: 650;
 	}
 
 	.jludrcom-feedback.is-ok,
 	.jludrcom-message.is-ok {
-		border-color: rgba(34, 197, 94, 0.42);
-		color: #bbf7d0;
+		border-color: rgba(21, 128, 61, 0.32);
+		background: #f0fdf4;
+		color: var(--jl-ok);
 	}
 
 	.jludrcom-feedback.is-error,
 	.jludrcom-message.is-error {
-		border-color: rgba(239, 68, 68, 0.42);
-		color: #fecaca;
+		border-color: rgba(185, 28, 28, 0.32);
+		background: #fef2f2;
+		color: var(--jl-danger);
 	}
 
 	.jludrcom-feedback.is-pending {
-		border-color: rgba(56, 189, 248, 0.42);
-		color: #bae6fd;
+		border-color: rgba(3, 105, 161, 0.28);
+		background: #eff6ff;
+		color: var(--jl-info);
 	}
 
-	.jludrcom-grid,
-	.jludrcom-panel-grid {
+	.jludrcom-status-strip,
+	.jludrcom-workspace,
+	.jludrcom-observability {
 		display: grid;
-		gap: 16px;
-		margin-bottom: 18px;
+		gap: 12px;
+		margin-bottom: 14px;
 	}
 
-	.jludrcom-grid {
+	.jludrcom-status-strip {
 		grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 	}
 
-	.jludrcom-panel-grid {
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+	.jludrcom-workspace {
+		grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+		align-items: start;
+	}
+
+	.jludrcom-observability {
+		grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+	}
+
+	.jludrcom-side-stack {
+		display: grid;
+		gap: 12px;
 	}
 
 	.jludrcom-card,
 	.jludrcom-editor,
 	.jludrcom-panel {
-		padding: 18px;
+		padding: 14px;
+	}
+
+	.jludrcom-status-strip .jludrcom-card {
+		border-left: 3px solid var(--jl-border-strong);
+		box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+	}
+
+	.jludrcom-status-strip .jludrcom-card:nth-child(1) {
+		border-left-color: var(--jl-accent);
+	}
+
+	.jludrcom-status-strip .jludrcom-card:nth-child(2) {
+		border-left-color: var(--jl-warn);
+	}
+
+	.jludrcom-status-strip .jludrcom-card:nth-child(3) {
+		border-left-color: var(--jl-info);
 	}
 
 	.jludrcom-card h3,
 	.jludrcom-editor h3,
 	.jludrcom-panel h3 {
-		margin: 0 0 12px;
-		font-size: 18px;
-		font-weight: 700;
-		color: #f8fafc;
+		margin: 0 0 10px;
+		color: var(--jl-text);
+		font-size: 15px;
+		line-height: 1.3;
+		font-weight: 800;
 	}
 
 	.jludrcom-kpi {
@@ -168,46 +214,46 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
-		margin-bottom: 12px;
+		margin-bottom: 8px;
 	}
 
 	.jludrcom-badge {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		min-height: 32px;
-		padding: 0 12px;
+		min-height: 28px;
+		padding: 0 10px;
 		border-radius: 999px;
-		font-size: 12px;
-		font-weight: 700;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
+		font-size: 11px;
+		font-weight: 800;
+		letter-spacing: 0.02em;
 		border: 1px solid transparent;
+		white-space: nowrap;
 	}
 
 	.jludrcom-badge.is-running {
-		background: rgba(34, 197, 94, 0.14);
-		border-color: rgba(34, 197, 94, 0.34);
-		color: #86efac;
+		background: #ecfdf5;
+		border-color: rgba(21, 128, 61, 0.28);
+		color: var(--jl-ok);
 	}
 
 	.jludrcom-badge.is-stopped,
 	.jludrcom-badge.is-critical {
-		background: rgba(239, 68, 68, 0.14);
-		border-color: rgba(239, 68, 68, 0.34);
-		color: #fca5a5;
+		background: #fef2f2;
+		border-color: rgba(185, 28, 28, 0.28);
+		color: var(--jl-danger);
 	}
 
 	.jludrcom-badge.is-warning {
-		background: rgba(245, 158, 11, 0.14);
-		border-color: rgba(245, 158, 11, 0.34);
-		color: #fcd34d;
+		background: #fffbeb;
+		border-color: rgba(180, 83, 9, 0.28);
+		color: var(--jl-warn);
 	}
 
 	.jludrcom-badge.is-info {
-		background: rgba(56, 189, 248, 0.14);
-		border-color: rgba(56, 189, 248, 0.34);
-		color: #bae6fd;
+		background: #eff6ff;
+		border-color: rgba(3, 105, 161, 0.24);
+		color: var(--jl-info);
 	}
 
 	.jludrcom-list,
@@ -219,8 +265,8 @@
 
 	.jludrcom-list li,
 	.jludrcom-error-list li {
-		padding: 10px 0;
-		border-top: 1px solid rgba(51, 65, 85, 0.65);
+		padding: 8px 0;
+		border-top: 1px solid var(--jl-border);
 	}
 
 	.jludrcom-list li:first-child,
@@ -231,74 +277,73 @@
 
 	.jludrcom-key {
 		display: block;
-		margin-bottom: 4px;
-		color: #cbd5e1;
-		font-size: 12px;
-		font-weight: 700;
+		margin-bottom: 2px;
+		color: var(--jl-muted);
+		font-size: 11px;
+		font-weight: 800;
 		text-transform: uppercase;
-		letter-spacing: 0.05em;
+		letter-spacing: 0.04em;
 	}
 
 	.jludrcom-value {
 		display: block;
-		color: #f8fafc;
-		line-height: 1.6;
-		font-weight: 600;
+		color: var(--jl-text);
+		line-height: 1.45;
+		font-weight: 650;
 		word-break: break-word;
 	}
 
 	.jludrcom-callout {
-		margin-top: 16px;
-		padding: 16px 18px;
-		border-radius: 14px;
-		border: 1px solid rgba(56, 189, 248, 0.34);
-		background: linear-gradient(180deg, rgba(12, 74, 110, 0.24), rgba(15, 23, 42, 0.94));
-		box-shadow: inset 0 1px 0 rgba(125, 211, 252, 0.12);
+		padding: 14px;
+		border-left: 4px solid var(--jl-info);
+		box-shadow: none;
 	}
 
 	.jludrcom-callout-title {
 		display: block;
-		margin-bottom: 8px;
-		color: #e0f2fe;
+		margin-bottom: 6px;
+		color: var(--jl-text);
 		font-size: 14px;
-		font-weight: 700;
-		letter-spacing: 0.02em;
+		font-weight: 800;
 	}
 
-	.jludrcom-callout-body {
-		color: #dbeafe;
-		line-height: 1.7;
-	}
-
-	.jludrcom-actions {
+	.jludrcom-toolbar {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 12px;
-		margin-bottom: 18px;
+		gap: 8px;
+		margin-bottom: 14px;
+		padding: 10px;
+		border: 1px solid var(--jl-border);
+		border-radius: 8px;
+		background: #ffffff;
+		box-shadow: var(--jl-shadow);
 	}
 
 	.jludrcom-button,
 	.jludrcom-toggle,
 	.jludrcom-refresh {
-		min-height: 44px;
-		padding: 0 16px;
-		border-radius: 12px;
+		min-height: 36px;
+		padding: 0 12px;
+		border-radius: 8px;
 		border: 1px solid var(--jl-border);
-		background: rgba(30, 41, 59, 0.92);
-		color: #f8fafc;
+		background: #ffffff;
+		color: var(--jl-text);
+		font-weight: 750;
 		cursor: pointer;
-		transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+		transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 	}
 
+	.jludrcom-select:hover,
+	.jludrcom-select:focus,
 	.jludrcom-button:hover,
 	.jludrcom-button:focus,
 	.jludrcom-toggle:hover,
 	.jludrcom-toggle:focus,
 	.jludrcom-refresh:hover,
 	.jludrcom-refresh:focus {
-		border-color: rgba(56, 189, 248, 0.6);
-		background: rgba(30, 41, 59, 1);
-		transform: translateY(-1px);
+		border-color: rgba(37, 99, 235, 0.55);
+		background: #f8fafc;
+		box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 	}
 
 	.jludrcom-button[disabled],
@@ -306,17 +351,25 @@
 	.jludrcom-refresh[disabled] {
 		opacity: 0.68;
 		cursor: wait;
-		transform: none;
+		box-shadow: none;
 	}
 
 	.jludrcom-button.cbi-button-apply {
-		background: linear-gradient(180deg, rgba(34, 197, 94, 0.26), rgba(22, 163, 74, 0.22));
-		border-color: rgba(34, 197, 94, 0.42);
+		background: var(--jl-ok);
+		border-color: var(--jl-ok);
+		color: #ffffff;
 	}
 
 	.jludrcom-button.is-danger {
-		background: linear-gradient(180deg, rgba(239, 68, 68, 0.20), rgba(185, 28, 28, 0.16));
-		border-color: rgba(239, 68, 68, 0.42);
+		background: #ffffff;
+		border-color: rgba(185, 28, 28, 0.42);
+		color: var(--jl-danger);
+	}
+
+	.jludrcom-button.cbi-button-apply:hover,
+	.jludrcom-button.cbi-button-apply:focus {
+		background: #166534;
+		color: #ffffff;
 	}
 
 	.jludrcom-panel-head {
@@ -324,7 +377,7 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
-		margin-bottom: 12px;
+		margin-bottom: 10px;
 	}
 
 	.jludrcom-panel-tools {
@@ -334,38 +387,40 @@
 		flex-wrap: wrap;
 	}
 
+	.jludrcom-issue-head {
+		margin-top: 12px;
+	}
+
 	#conf {
 		width: 100%;
-		min-height: 320px;
-		padding: 14px;
+		min-height: 468px;
+		padding: 12px;
 		box-sizing: border-box;
-		border-radius: 14px;
+		border-radius: 8px;
 		border: 1px solid var(--jl-border);
-		background: #020617;
-		color: #e2e8f0;
+		background: #ffffff;
+		color: var(--jl-text);
 		font: 14px/1.6 "Fira Code", Consolas, Monaco, monospace;
 	}
 
 	#conf:focus,
 	#conf:hover,
+	.jludrcom-select:focus,
 	.jludrcom-toggle:focus,
 	.jludrcom-refresh:focus,
 	.jludrcom-button:focus {
-		outline: 2px solid rgba(56, 189, 248, 0.55);
+		outline: 2px solid rgba(37, 99, 235, 0.45);
 		outline-offset: 2px;
 	}
 
 	.jludrcom-editor-meta {
 		margin-top: 10px;
-		font-size: 13px;
+		font-size: 12px;
 	}
 
 	.jludrcom-config-example {
-		margin: 14px 0 16px;
 		padding: 14px;
-		border-radius: 14px;
-		border: 1px solid rgba(56, 189, 248, 0.28);
-		background: linear-gradient(180deg, rgba(15, 23, 42, 0.86), rgba(2, 6, 23, 0.96));
+		box-shadow: none;
 	}
 
 	.jludrcom-config-example-head {
@@ -374,37 +429,35 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 8px 12px;
-		margin-bottom: 10px;
+		margin-bottom: 8px;
 	}
 
 	.jludrcom-config-example-note {
-		color: #cbd5e1;
-		font-size: 13px;
-		line-height: 1.6;
+		font-size: 12px;
 	}
 
 	.jludrcom-config-example-code {
 		margin: 0;
-		padding: 14px;
-		border-radius: 12px;
-		border: 1px solid rgba(51, 65, 85, 0.85);
-		background: #020617;
-		color: #e2e8f0;
+		padding: 12px;
+		border-radius: 8px;
+		border: 1px solid var(--jl-border);
+		background: var(--jl-terminal);
+		color: #e5e7eb;
 		overflow: auto;
 		white-space: pre-wrap;
 		word-break: break-word;
-		font: 13px/1.65 "Fira Code", Consolas, Monaco, monospace;
+		font: 12px/1.6 "Fira Code", Consolas, Monaco, monospace;
 	}
 
 	#jludrcom-log-output {
 		margin: 0;
-		padding: 14px;
-		min-height: 360px;
+		padding: 12px;
+		min-height: 320px;
 		max-height: 520px;
 		overflow: auto;
-		border-radius: 14px;
+		border-radius: 8px;
 		border: 1px solid var(--jl-border);
-		background: #020617;
+		background: var(--jl-terminal);
 		color: #cbd5e1;
 		white-space: pre-wrap;
 		word-break: break-word;
@@ -416,7 +469,7 @@
 		align-items: center;
 		gap: 8px;
 		margin-bottom: 6px;
-		color: #f8fafc;
+		color: var(--jl-text);
 		font-weight: 600;
 	}
 
@@ -429,15 +482,17 @@
 	}
 
 	@media (max-width: 960px) {
-		.jludrcom-hero-head {
+		.jludrcom-console-head {
 			flex-direction: column;
+			align-items: stretch;
 		}
 
 		.jludrcom-locale {
 			width: 100%;
 		}
 
-		.jludrcom-panel-grid {
+		.jludrcom-workspace,
+		.jludrcom-observability {
 			grid-template-columns: 1fr;
 		}
 	}
@@ -452,32 +507,27 @@
 </style>
 
 <div class="jludrcom-page">
-	<div class="jludrcom-hero">
-		<div class="jludrcom-hero-head">
-			<div class="jludrcom-hero-copy">
-				<h2 data-i18n="page_title"><%:DrCOM%></h2>
-				<p data-i18n="page_subtitle"><%:Expanded operations dashboard with current status, error diagnosis, and live logs for faster troubleshooting.%></p>
-			</div>
-			<label class="jludrcom-locale" for="jludrcom-language">
-				<span class="jludrcom-key jludrcom-locale-label" data-i18n="language_label">Language</span>
-				<select id="jludrcom-language" class="jludrcom-select">
-					<option value="en" data-i18n="language_option_en">English</option>
-					<option value="zh-CN" data-i18n="language_option_zh">简体中文</option>
-				</select>
-			</label>
+	<header class="jludrcom-console-head">
+		<div class="jludrcom-console-title">
+			<span class="jludrcom-eyebrow">DrCOM OpenWrt</span>
+			<h2 data-i18n="page_title"><%:Authentication console%></h2>
+			<p data-i18n="page_subtitle"><%:Status, configuration, and logs for campus network access.%></p>
 		</div>
-		<p class="jludrcom-help">Use old dogcom syntax / 请使用旧版 dogcom 语法：<code>key='value'</code>, <code>mac=0xB025AA851014</code>, <code>keepalive1_mod=True</code>.</p>
-		<div class="jludrcom-callout">
-			<span class="jludrcom-callout-title" data-i18n="campus_network_tip_title"><%:Campus network note%></span>
-			<p class="jludrcom-callout-body" data-i18n="campus_network_tip_body"><%:Some schools require the WAN side to use a static IP configuration before DrCOM authentication. If the challenge stage keeps retrying without a reply, verify whether your campus requires manually assigned IP, gateway, and DNS settings first.%></p>
-		</div>
-		<% if message then %>
-			<div id="jludrcom-form-message" data-message-key="<%=message_key or ""%>" class="jludrcom-message <% if message_type == "error" then %>is-error<% else %>is-ok<% end %>"><%=message%></div>
-		<% end %>
-		<div id="jludrcom-feedback" class="jludrcom-feedback is-pending" data-i18n="feedback_loading"><%:Loading status, logs, and diagnostics...%></div>
-	</div>
+		<label class="jludrcom-locale" for="jludrcom-language">
+			<span class="jludrcom-key jludrcom-locale-label" data-i18n="language_label">Language</span>
+			<select id="jludrcom-language" class="jludrcom-select">
+				<option value="en" data-i18n="language_option_en">English</option>
+				<option value="zh-CN" data-i18n="language_option_zh">简体中文</option>
+			</select>
+		</label>
+	</header>
 
-	<div class="jludrcom-grid">
+	<% if message then %>
+		<div id="jludrcom-form-message" data-message-key="<%=message_key or ""%>" class="jludrcom-message <% if message_type == "error" then %>is-error<% else %>is-ok<% end %>"><%=message%></div>
+	<% end %>
+	<div id="jludrcom-feedback" class="jludrcom-feedback is-pending" data-i18n="feedback_loading"><%:Loading status, logs, and diagnostics...%></div>
+
+	<section class="jludrcom-status-strip">
 		<div class="jludrcom-card">
 			<div class="jludrcom-kpi">
 				<h3 data-i18n="current_status"><%:Current Status%></h3>
@@ -506,18 +556,6 @@
 
 		<div class="jludrcom-card">
 			<div class="jludrcom-kpi">
-				<h3 data-i18n="last_error"><%:Last Error%></h3>
-				<span id="jludrcom-error-state" class="jludrcom-badge is-info" data-i18n="waiting"><%:Waiting%></span>
-			</div>
-			<ul class="jludrcom-list">
-				<li><span class="jludrcom-key" data-i18n="summary"><%:Summary%></span><span id="jludrcom-error-title" class="jludrcom-value">-</span></li>
-				<li><span class="jludrcom-key" data-i18n="evidence"><%:Evidence%></span><span id="jludrcom-error-line" class="jludrcom-value">-</span></li>
-				<li><span class="jludrcom-key" data-i18n="suggested_fix"><%:Suggested Fix%></span><span id="jludrcom-error-hint" class="jludrcom-value">-</span></li>
-			</ul>
-		</div>
-
-		<div class="jludrcom-card">
-			<div class="jludrcom-kpi">
 				<h3 data-i18n="network_status"><%:Network Status%></h3>
 				<span id="jludrcom-network-state" class="jludrcom-badge is-info" data-i18n="loading"><%:Loading%></span>
 			</div>
@@ -530,25 +568,43 @@
 				<li><span class="jludrcom-key" data-i18n="auto_recovery"><%:Auto Recovery%></span><span id="jludrcom-network-recovery" class="jludrcom-value">-</span></li>
 			</ul>
 		</div>
-	</div>
+	</section>
 
-	<div class="jludrcom-actions">
+	<div class="jludrcom-toolbar">
 		<button type="button" class="jludrcom-button" data-service-action="start" data-i18n="start_service"><%:Start Service%></button>
 		<button type="button" class="jludrcom-button cbi-button-apply" data-service-action="restart" data-i18n="restart_service"><%:Restart Service%></button>
 		<button type="button" class="jludrcom-button is-danger" data-service-action="stop" data-i18n="stop_service"><%:Stop Service%></button>
+		<button type="button" id="jludrcom-toggle-autostart" class="jludrcom-button" data-i18n="enable_autostart"><%:Enable Autostart%></button>
 		<button type="button" id="jludrcom-refresh-all" class="jludrcom-refresh" data-i18n="refresh_now"><%:Refresh Now%></button>
 		<button type="button" id="jludrcom-toggle-refresh" class="jludrcom-toggle"><%:Pause Auto Refresh%></button>
 	</div>
 
-	<div class="jludrcom-editor">
-		<h3 data-i18n="config_editor"><%:Config Editor%></h3>
-		<p class="jludrcom-help">Use the official dogcom-style syntax. The sample below selects the JLU profile, uses single quotes for strings, and keeps the MAC in 0x form. / 请使用官方 dogcom 风格语法。下方样例选择吉林大学 profile，字符串使用单引号，MAC 使用 0x 格式。</p>
-		<div class="jludrcom-config-example">
-			<div class="jludrcom-config-example-head">
-				<span class="jludrcom-callout-title">Reference Sample / 参考样例</span>
-				<span class="jludrcom-config-example-note">Replace username, password, mac, and host_ip with your own campus values. If the campus binds a physical MAC, use that bound MAC here. / 请将 username、password、mac、host_ip 替换为你自己的校园网参数；如果学校绑定了物理 MAC，这里必须填写绑定后的那个 MAC。</span>
+	<div class="jludrcom-workspace">
+		<section class="jludrcom-editor">
+			<h3 data-i18n="config_editor"><%:Config Editor%></h3>
+			<p class="jludrcom-help" data-i18n="config_editor_help"><%:Use dogcom-style key = value lines. Keep username, password, mac, and host_ip aligned with campus binding.%></p>
+			<form method="post" action="">
+				<input type="hidden" name="token" value="<%=token%>" />
+				<textarea id="conf" name="conf" rows="20"><%=conf%></textarea>
+				<div class="cbi-page-actions" style="margin-top: 12px;">
+					<button type="submit" name="service_action" value="save_restart" class="jludrcom-button cbi-button-apply" data-i18n="save_restart"><%:Save & Restart%></button>
+				</div>
+			</form>
+			<p class="jludrcom-editor-meta"><span data-i18n="debug_flow_label"><%:Recommended debug flow:%></span> <span data-i18n="debug_flow_steps"><%:stop service -> run in foreground -> observe live logs -> fix config -> restart service.%></span></p>
+		</section>
+
+		<aside class="jludrcom-side-stack">
+			<div class="jludrcom-callout">
+				<span class="jludrcom-callout-title" data-i18n="campus_network_tip_title"><%:Campus network note%></span>
+				<p class="jludrcom-callout-body" data-i18n="campus_network_tip_body"><%:Some schools require the WAN side to use a static IP configuration before DrCOM authentication. If the challenge stage keeps retrying without a reply, verify whether your campus requires manually assigned IP, gateway, and DNS settings first.%></p>
 			</div>
-			<pre class="jludrcom-config-example-code"># Replace username / password / mac / host_ip with your own campus values.
+
+			<div class="jludrcom-config-example">
+				<div class="jludrcom-config-example-head">
+					<span class="jludrcom-callout-title">Reference Sample / 参考样例</span>
+					<span class="jludrcom-config-example-note">Replace username, password, mac, and host_ip with your own campus values. If the campus binds a physical MAC, use that bound MAC here. / 请将 username、password、mac、host_ip 替换为你自己的校园网参数；如果学校绑定了物理 MAC，这里必须填写绑定后的那个 MAC。</span>
+				</div>
+				<pre class="jludrcom-config-example-code"># Replace username / password / mac / host_ip with your own campus values.
 username='your_username'
 password='your_password'
 server='10.100.61.3'
@@ -565,21 +621,26 @@ IPDOG='\x01'
 profile='jlu-modern'
 keepalive1_mod=True
 startup_delay_seconds=60</pre>
-		</div>
-		<form method="post" action="">
-			<input type="hidden" name="token" value="<%=token%>" />
-			<textarea id="conf" name="conf" rows="20"><%=conf%></textarea>
-			<div class="cbi-page-actions" style="margin-top: 14px;">
-				<button type="submit" name="service_action" value="save_restart" class="jludrcom-button cbi-button-apply" data-i18n="save_restart"><%:Save & Restart%></button>
 			</div>
-		</form>
-		<p class="jludrcom-editor-meta"><span data-i18n="debug_flow_label"><%:Recommended debug flow:%></span> <span data-i18n="debug_flow_steps"><%:stop service -> run in foreground -> observe live logs -> fix config -> restart service.%></span></p>
+		</aside>
 	</div>
 
-	<div class="jludrcom-panel-grid">
+	<section class="jludrcom-observability">
 		<div class="jludrcom-panel">
 			<div class="jludrcom-panel-head">
-				<h3 data-i18n="diagnostics"><%:Diagnostics%></h3>
+				<div>
+					<h3 data-i18n="diagnostics"><%:Diagnostics%></h3>
+					<div class="jludrcom-panel-tools"><span class="jludrcom-meta" data-i18n="diagnostics_meta"><%:Auto-generated from current status and recent log patterns.%></span></div>
+				</div>
+				<span id="jludrcom-error-state" class="jludrcom-badge is-info" data-i18n="waiting"><%:Waiting%></span>
+			</div>
+			<ul class="jludrcom-list">
+				<li><span class="jludrcom-key" data-i18n="summary"><%:Summary%></span><span id="jludrcom-error-title" class="jludrcom-value">-</span></li>
+				<li><span class="jludrcom-key" data-i18n="evidence"><%:Evidence%></span><span id="jludrcom-error-line" class="jludrcom-value">-</span></li>
+				<li><span class="jludrcom-key" data-i18n="suggested_fix"><%:Suggested Fix%></span><span id="jludrcom-error-hint" class="jludrcom-value">-</span></li>
+			</ul>
+			<div class="jludrcom-panel-head jludrcom-issue-head">
+				<h3 data-i18n="issue_list"><%:Issue List%></h3>
 				<div class="jludrcom-panel-tools"><span class="jludrcom-meta" data-i18n="diagnostics_meta"><%:Auto-generated from current status and recent log patterns.%></span></div>
 			</div>
 			<ul id="jludrcom-error-list" class="jludrcom-error-list"><li class="jludrcom-empty" data-i18n="waiting_diagnostics"><%:Waiting for diagnostics...%></li></ul>
@@ -592,7 +653,7 @@ startup_delay_seconds=60</pre>
 			</div>
 			<pre id="jludrcom-log-output" data-i18n="loading_logs"><%:Loading logs...%></pre>
 		</div>
-	</div>
+	</section>
 </div>
 
 <script type="text/javascript">
@@ -611,8 +672,8 @@ startup_delay_seconds=60</pre>
 	var currentLanguage = 'en';
 	var translations = {
 		en: {
-			page_title: 'DrCOM',
-			page_subtitle: 'Expanded operations dashboard with current status, error diagnosis, and live logs for faster troubleshooting.',
+			page_title: 'Authentication console',
+			page_subtitle: 'Status, configuration, and logs for campus network access.',
 			language_label: 'Language',
 			language_option_en: 'English',
 			language_option_zh: '简体中文',
@@ -645,15 +706,18 @@ startup_delay_seconds=60</pre>
 			start_service: 'Start Service',
 			restart_service: 'Restart Service',
 			stop_service: 'Stop Service',
+			enable_autostart: 'Enable Autostart',
+			disable_autostart: 'Disable Autostart',
 			refresh_now: 'Refresh Now',
 			pause_auto_refresh: 'Pause Auto Refresh',
 			resume_auto_refresh: 'Resume Auto Refresh',
 			config_editor: 'Config Editor',
-			config_editor_help: 'Use the official dogcom-style syntax. The runtime checker below highlights missing keys and common format mistakes before you restart the service.',
+			config_editor_help: 'Use dogcom-style key = value lines. Keep username, password, mac, and host_ip aligned with campus binding.',
 			save_restart: 'Save & Restart',
 			debug_flow_label: 'Recommended debug flow:',
 			debug_flow_steps: 'stop service -> run in foreground -> observe live logs -> fix config -> restart service.',
 			diagnostics: 'Diagnostics',
+			issue_list: 'Issue List',
 			diagnostics_meta: 'Auto-generated from current status and recent log patterns.',
 			waiting_diagnostics: 'Waiting for diagnostics...',
 			live_logs: 'Live Logs',
@@ -757,8 +821,8 @@ startup_delay_seconds=60</pre>
 			'form.configSavedRestartFailed': 'Configuration saved, but restart failed. Review the status and logs panels below.'
 		},
 		'zh-CN': {
-			page_title: 'DrCOM 认证服务',
-			page_subtitle: '扩展运维面板，聚合当前状态、错误诊断与实时日志，加快排障。',
+			page_title: '认证控制台',
+			page_subtitle: '校园网接入的状态、配置与日志。',
 			language_label: '语言',
 			language_option_en: 'English',
 			language_option_zh: '简体中文',
@@ -791,15 +855,18 @@ startup_delay_seconds=60</pre>
 			start_service: '启动服务',
 			restart_service: '重启服务',
 			stop_service: '停止服务',
+			enable_autostart: '启用开机自启',
+			disable_autostart: '关闭开机自启',
 			refresh_now: '立即刷新',
 			pause_auto_refresh: '暂停自动刷新',
 			resume_auto_refresh: '恢复自动刷新',
 			config_editor: '配置编辑器',
-			config_editor_help: '请使用官方 dogcom 风格语法。下方运行时检查器会在你重启服务前高亮缺失键和常见格式问题。',
+			config_editor_help: '请使用 dogcom 风格 key = value 配置，并确保 username、password、mac、host_ip 与校园网绑定信息一致。',
 			save_restart: '保存并重启',
 			debug_flow_label: '推荐排障流程：',
 			debug_flow_steps: '停止服务 -> 前台运行 -> 观察实时日志 -> 修正配置 -> 重启服务。',
 			diagnostics: '诊断',
+			issue_list: '问题列表',
 			diagnostics_meta: '根据当前状态与最近日志模式自动生成。',
 			waiting_diagnostics: '等待生成诊断结果...',
 			live_logs: '实时日志',
@@ -1060,7 +1127,7 @@ startup_delay_seconds=60</pre>
 	function setBadge(node, text, stateClass) { if (node) { node.className = 'jludrcom-badge ' + stateClass; node.textContent = text; } }
 	function joinList(items, emptyText) { return (items && items.length) ? items.join(', ') : (emptyText || '-'); }
 	function setControlsDisabled(disabled) {
-		var controls = document.querySelectorAll('[data-service-action], #jludrcom-refresh-all, #jludrcom-toggle-refresh');
+		var controls = document.querySelectorAll('[data-service-action], #jludrcom-toggle-autostart, #jludrcom-refresh-all, #jludrcom-toggle-refresh');
 		var index;
 		for (index = 0; index < controls.length; index++) {
 			controls[index].disabled = !!disabled;
@@ -1197,6 +1264,13 @@ startup_delay_seconds=60</pre>
 		setText('jludrcom-network-recovery', recoveryLabel);
 	}
 
+	function renderAutostartToggle(enabled) {
+		var button = byId('jludrcom-toggle-autostart');
+		if (!button) { return; }
+		button.textContent = enabled ? t('disable_autostart') : t('enable_autostart');
+		button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+	}
+
 	function renderStatus(data) {
 		lastStatusData = data;
 		setBadge(byId('jludrcom-service-state'), data.running ? t('running') : t('stopped'), data.running ? 'is-running' : 'is-stopped');
@@ -1205,6 +1279,7 @@ startup_delay_seconds=60</pre>
 		setText('jludrcom-log-source', data.log_source || '-');
 		setText('jludrcom-log-source-text', data.log_source || '-');
 		setBadge(byId('jludrcom-service-enabled'), data.enabled ? t('enabled') : t('disabled'), data.enabled ? 'is-running' : 'is-warning');
+		renderAutostartToggle(!!data.enabled);
 		renderNetwork(data.network || null);
 		renderConfig(data.config || {});
 		renderErrors(data.errors || [], data.last_error || null);
@@ -1276,6 +1351,8 @@ startup_delay_seconds=60</pre>
 		if (action === 'start') { return t('start_service'); }
 		if (action === 'restart') { return t('restart_service'); }
 		if (action === 'stop') { return t('stop_service'); }
+		if (action === 'enable') { return t('enable_autostart'); }
+		if (action === 'disable') { return t('disable_autostart'); }
 		return translateRawText(action);
 	}
 
@@ -1302,6 +1379,9 @@ startup_delay_seconds=60</pre>
 		for (i = 0; i < buttons.length; i++) {
 			buttons[i].onclick = function() { triggerService(this.getAttribute('data-service-action')); };
 		}
+		byId('jludrcom-toggle-autostart').onclick = function() {
+			triggerService(lastStatusData && lastStatusData.enabled ? 'disable' : 'enable');
+		};
 		byId('jludrcom-refresh-all').onclick = function() { refreshAll(false); };
 		var languageSelector = byId('jludrcom-language');
 		if (languageSelector) {
